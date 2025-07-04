@@ -14,7 +14,18 @@ other uses are only subjected to the GNU GPLv3+ (see license bellow).
 Connecting this program to the APRS-IS network also requires a license as
 you will be, effectively, operating remote transmitters through the Internet.
 
+# Updates to orginal
 
+SQLite3 database for users, blacklisted callsigns and admins
+Blacklist limited to Admins
+No public logging
+
+CQ <space> <listname> <message> <-- listname is configured in APRSBOT and can be multiples
+NOTE: There is no automatic unsubscribe
+
+NetMSG <space> <listname> <message> <-- to distribute message to list
+NETUSERS <space> <listname> <-- list of users
+NETCHECKOUT <space> <listname> <-- to leave the list.
 
 
 # License
