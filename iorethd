@@ -19,7 +19,7 @@ if __name__ == "__main__":
     b = ReplyBot(sys.argv[1])
     #b._aprs.start()  # this starts APRS-IS thread from inside the bot
     b.connect()
-#    b._aprs.send_aprs_msg("KC2NJV-7", "manual test")
+#    b._aprs.send_aprs_msg("<callsign>", "manual test")
     try:
         b.loop()
     except Exception as e:
