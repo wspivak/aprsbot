@@ -1,5 +1,5 @@
 
-# About
+# About (from the orginal)
 
 Ioreth is a **very experimental** APRS bot. There is a lot f things to be
 done yet, including writing the documentation. For now, you are welcome to
@@ -33,7 +33,7 @@ NETUSERS <space> <listname> <-- list of users
 NETCHECKOUT <space> <listname> <-- to leave the list.
 
 
-# License
+# License (from the original)
 
 Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
 
@@ -49,8 +49,6 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
 
 
 
