@@ -22,15 +22,21 @@ Blacklist limited to Admins
 
 No public logging
 
-CQ <space> <listname> <message> <-- listname is configured in APRSBOT and can be multiples
+Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
-NOTE: There is no automatic unsubscribe
+<b>New/Changed Commands:</b>
 
-NetMSG <space> <listname> <message> <-- to distribute message to list
+<b>NOTE:</b> Commands are not case sensitive (given my radios, that would be insane :) )
 
-NETUSERS <space> <listname> <-- list of users
+CQ [space] [listname] [message] <-- listname is configured in APRSBOT and can be multiples
 
-NETCHECKOUT <space> <listname> <-- to leave the list.
+[<b>NOTE:</b> There is no automatic unsubscribe (concept is that this was made for Emergency Communications)
+
+NetMSG [space] [listname] [message] <-- to distribute message to list
+
+NETUSERS [space] [listname] <-- list of users
+
+NETCHECKOUT [space] [listname] <-- to leave the list.
 
 
 # License (from the original)
