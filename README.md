@@ -40,6 +40,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Contact information
 
+Hacker:
+Wayne Spivak (callsign: KC2NJV)
+E-mail: <kc2njv@sbanetweb.com>
+Web: <http://sbanetweb.com:8080>
+
+
+Original Author:
 Author: Alexandre Erwin Ittner   (callsign: PP5ITT)
 
 Email: <alexandre@ittner.com.br>
