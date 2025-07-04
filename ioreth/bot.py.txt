@@ -1,0 +1,357 @@
+#
+# Ioreth - An APRS library and bot
+# Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+import sys
+import time
+import logging
+import configparser
+import os
+import re
+import random
+import sqlite3
+
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+
+from cronex import CronExpression
+
+from .clients import AprsClient
+#from . import aprs
+from . import remotecmd
+from . import utils
+import aprs
+import aprslib
+packet = aprslib.parse("W1AW>APRS,TCPIP*:Hello world")
+print(packet)
+
+
+
+def is_br_callsign(callsign):
+    return bool(re.match("P[PTUY][0-9].+", callsign.upper()))
+#################
+
+class BotAprsHandler(aprs.TCP):
+    def __init__(self, callsign, passcode, client):
+        super().__init__(
+        user=callsign.encode("utf-8"),
+        password=passcode,
+        aprs_filter=b"b/ERLI"
+        )
+
+        self.callsign = callsign
+        self._client = client
+        self.db = sqlite3.connect("erli.db", check_same_thread=False)
+        self._init_db()
+        self.netname = ""
+        self.alias = self.callsign
+        
+    def is_connected(self):
+        if not self._sock or self._sock._closed:
+            logging.warning("APRS-IS socket not connected — skipping status")
+            return
+        
+## temp
+    def on_packet(self, packet):
+        print(f"[APRS RAW] {packet}")
+        if self._client and hasattr(self._client, "on_recv_frame"):
+            self._client.on_recv_frame(packet)
+
+##temp
+
+    def connect_and_start(self):
+        self.start()
+        logging.info(f"Connected to APRS-IS as {self.callsign}")
+
+    def _init_db(self):
+        cur = self.db.cursor()
+        cur.execute("""CREATE TABLE IF NOT EXISTS erli_users (
+            callsign TEXT PRIMARY KEY,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)""")
+        cur.execute("""CREATE TABLE IF NOT EXISTS blacklist (
+            callsign TEXT PRIMARY KEY,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)""")
+        self.db.commit()
+
+
+    def is_blacklisted(self, callsign):
+        cur = self.db.cursor()
+        cur.execute("SELECT 1 FROM blacklist WHERE callsign = ?", (callsign,))
+        return cur.fetchone() is not None
+
+    def sanitize_text(self, text):
+        return re.sub(r'\s+', ' ', re.sub(r'\{\d+\}$', '', text.strip()))
+
+    def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
+        if addressee.strip().upper() != self.callsign.upper():
+            return
+
+        clean_source = source.replace("*", "")
+
+        if self.is_blacklisted(clean_source):
+            logging.info(f"Ignoring message from blacklisted callsign: {clean_source}")
+            return
+
+        self.handle_aprs_query(clean_source, text)
+
+        if msgid:
+            self.send_aprs_msg(clean_source, "ack" + msgid, from_call=self.alias)
+
+    def handle_aprs_query(self, source, text):
+        qry = text.strip().lower()
+        if qry == "ping":
+            self.send_aprs_msg(source, "Pong!", from_call=self.alias)
+        elif qry == "time":
+            ts = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+            self.send_aprs_msg(source, f"Current UTC time: {ts}", from_call=self.alias)
+        elif qry == "version":
+            import sys
+            self.send_aprs_msg(source, f"Python {sys.version.split()[0]}", from_call=self.alias)
+        elif qry == "help":
+            self.send_aprs_msg(source, "Commands: ping, time, version, help", from_call=self.alias)
+        else:
+            self.send_aprs_msg(source, "Unrecognized command. Send 'help'.", from_call=self.alias)
+
+
+    def _remove_user(self, source):
+        self.db.cursor().execute("DELETE FROM erli_users WHERE callsign = ?", (source,))
+        self.db.commit()
+        logging.info(f"Removed {source} from {self.netname}")
+        self.send_aprs_msg(source, "NETCheckOUT Successful")
+
+    def _send_user_list(self, source):
+        cur = self.db.cursor()
+        cur.execute("SELECT callsign FROM erli_users ORDER BY timestamp DESC LIMIT 10")
+        rows = cur.fetchall()
+        reply = "Last 10 users:\n" + ", ".join(row[0] for row in rows) if rows else f"No {self.netname} users heard yet."
+        self.send_aprs_msg(source, reply)
+        logging.info(f"Sent user list to {source}")
+
+    def make_aprs_msg(self, to_call, text, source=None):
+        src = source or self.callsign
+        frame_str = f"{src}>{to_call}:{text}"
+        return frame_str  # now you're returning a plain APRS frame string
+ 
+
+
+    def send_aprs_msg(self, to_call, text, from_call=None):
+        source = from_call or self.callsign
+        frame = self.make_aprs_msg(to_call, text, source=source)
+        logging.info(f"Sending frame: {frame}")
+        self.send(frame.encode("utf-8"))
+
+    def send_aprs_status(self, status):
+        logging.debug(f"APRS status client object: {type(self._client)}")
+
+        if not self._client or not hasattr(self._client, 'is_connected'):
+            logging.error("No valid client object or method — status not sent.")
+            return
+
+        if not self._client or not hasattr(self._client, "is_connected") or not self._client.is_connected():
+            logging.warning("Client not connected or cannot check status. Skipping send_aprs_status.")
+            return
+
+
+        self._client.enqueue_frame(self.make_aprs_status(status))
+
+
+    
+    def _check_kiss_health(self):
+        if not self._client or not self._client.is_connected():
+            logging.warning("KISS/TCP disconnected. Attempting reconnect.")
+            try:
+                self._client.connect()
+            except Exception as e:
+                logging.error(f"KISS reconnect failed: {e}")
+
+        
+        
+class SystemStatusCommand(remotecmd.BaseRemoteCommand):
+    def __init__(self, cfg):
+        remotecmd.BaseRemoteCommand.__init__(self, "system-status")
+        self._cfg = cfg
+        self.status_str = ""
+
+    def run(self):
+        net_status = (
+            self._check_host_scope("Eth", "eth_host")
+            + self._check_host_scope("Inet", "inet_host")
+            + self._check_host_scope("DNS", "dns_host")
+            + self._check_host_scope("VPN", "vpn_host")
+        )
+        self.status_str = "At %s: Uptime %s" % (
+            time.strftime("%Y-%m-%d %H:%M:%S UTC%Z"),
+            utils.human_time_interval(utils.get_uptime()),
+        )
+        if len(net_status) > 0:
+            self.status_str += "," + net_status
+
+    def _check_host_scope(self, label, cfg_key):
+        if not cfg_key in self._cfg:
+            return ""
+        ret = utils.simple_ping(self._cfg[cfg_key])
+        return " " + label + (":Ok" if ret else ":Err")
+
+
+class ReplyBot(AprsClient):
+    def __init__(self, config_file):
+        super().__init__()
+        self._config_file = config_file
+        self._cfg = configparser.ConfigParser()
+        self._cfg.optionxform = str
+        self._cfg.read(self._config_file)
+
+        # Pull credentials from config
+        callsign = self._cfg.get("aprs", "callsign")
+        passcode = self._cfg.get("aprs", "passcode")
+
+
+        self._aprs = BotAprsHandler(callsign, passcode, self)
+        self._aprs._client = self  # 👈 This ensures callbacks go to this bot instance
+        self._last_blns = time.monotonic()
+        self._last_cron_blns = 0
+        self._last_status = time.monotonic()
+        self._last_reconnect_attempt = 0
+        self._rem = remotecmd.RemoteCommandHandler()
+
+    def is_connected(self):
+        return self._aprs and hasattr(self._aprs, '_sock') and self._aprs._sock and not self._aprs._sock._closed
+
+    def connect(self):
+        pass  # Do nothing — handled by BotAprsHandler
+
+    def loop(self):
+        while True:
+            self.on_loop_hook()
+            time.sleep(1)
+
+    def on_connect(self):
+        logger.info("Connected")
+
+    def on_disconnect(self):
+        logger.warning("KSS Disconnected! Will try again soon...")
+
+    def on_recv_frame(self, frame):
+        logging.info(f"RECV FRAME: {frame}")
+        logging.debug(f"FRAME DIR: {dir(frame)}")
+        logging.debug(f"FRAME VARS: {vars(frame)}")
+
+        # ✅ 1. Handle direct messages (e.g. KC2NJV-7>ERLI: ping)
+        if hasattr(frame, "destination") and hasattr(frame, "text"):
+            if frame.destination.strip().upper() == self._aprs.callsign.upper():
+                self._aprs.on_aprs_message(
+                    source=frame.source,
+                    addressee=frame.destination,
+                    text=frame.text,
+                    origframe=str(frame)
+                )
+                return
+
+        # ✅ 2. Handle third-party messages (e.g. ::ERLI     :ping)
+        if hasattr(frame, "text") and frame.text.startswith("::"):
+            try:
+                addr_field = frame.text[2:11].strip()
+                body = frame.text[11:].strip()
+                self._aprs.on_aprs_message(
+                    source=frame.source,
+                    addressee=addr_field,
+                    text=body,
+                    origframe=str(frame)
+                )
+                return
+            except Exception as e:
+                logging.warning(f"Failed to parse APRS message: {e}")
+
+        # ✅ 3. Fallback: catch unstructured or raw frames
+        if hasattr(frame, "line"):
+            raw = frame.line
+            logging.info(f"RAW LINE: {raw}")
+            if ">ERLI:" in raw.upper():  # ensure case-insensitive match
+                try:
+                    parts = raw.split(">", 1)
+                    if len(parts) == 2:
+                        src, rest = parts
+                        dst, msg = rest.split(":", 1)
+                        self._aprs.on_aprs_message(
+                            source=src.strip(),
+                            addressee=dst.strip(),
+                            text=msg.strip(),
+                            origframe=raw
+                        )
+                except Exception as e:
+                    logging.warning(f"Failed to fallback-parse frame: {e}")
+       
+        
+    def on_loop_hook(self):
+        super().on_loop_hook()
+#        self._check_reconnection()
+        self._update_bulletins()
+        self._update_status()
+
+        # Handle any remote command results
+        while True:
+            cmd = self._rem.poll_ret()
+            if not cmd:
+                break
+            self.on_remote_command_result(cmd)
+
+    def _check_reconnection(self):
+        if self.is_connected():
+            return
+        now = time.monotonic()
+        if now > self._last_reconnect_attempt + 5:
+            self._last_reconnect_attempt = now
+            logger.info("Attempting reconnect to APRS-IS")
+            try:
+                self.connect()
+            except Exception as e:
+                logger.warning(f"Reconnect failed: {e}")
+
+    def _update_bulletins(self):
+        if not self._cfg.has_section("bulletins"):
+            return
+        max_age = self._cfg.getint("bulletins", "send_freq", fallback=600)
+        now = time.monotonic()
+        if now <= (self._last_blns + max_age):
+            return
+        self._last_blns = now
+
+        for key in sorted(self._cfg.options("bulletins")):
+            if key.upper().startswith("BLN"):
+                message = self._cfg.get("bulletins", key)
+                logger.info(f"Sending bulletin {key}: {message}")
+                self._aprs.send_aprs_msg(key, message)
+
+    def _update_status(self):
+        if not self._cfg.has_section("status"):
+            return
+        max_age = self._cfg.getint("status", "send_freq", fallback=600)
+        now = time.monotonic()
+        if now <= (self._last_status + max_age):
+            return
+        self._last_status = now
+        cmd = SystemStatusCommand(self._cfg["status"])
+        self._rem.post_cmd(cmd)
+
+    def on_remote_command_result(self, cmd):
+        if not hasattr(self._aprs, 'send_aprs_status'):
+            logging.warning("APRS handler lacks status sending — skipping.")
+            return
+
+        if isinstance(cmd, SystemStatusCommand):
+            self._aprs.send_aprs_status(cmd.status_str)
+
