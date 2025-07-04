@@ -17,14 +17,19 @@ you will be, effectively, operating remote transmitters through the Internet.
 # Updates to orginal
 
 SQLite3 database for users, blacklisted callsigns and admins
+
 Blacklist limited to Admins
+
 No public logging
 
 CQ <space> <listname> <message> <-- listname is configured in APRSBOT and can be multiples
+
 NOTE: There is no automatic unsubscribe
 
 NetMSG <space> <listname> <message> <-- to distribute message to list
+
 NETUSERS <space> <listname> <-- list of users
+
 NETCHECKOUT <space> <listname> <-- to leave the list.
 
 
@@ -52,8 +57,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # Contact information
 
 Hacker:
+
 Wayne Spivak (callsign: KC2NJV)
+
 E-mail: <kc2njv@sbanetweb.com>
+
 Web: <http://sbanetweb.com:8080>
 
 
