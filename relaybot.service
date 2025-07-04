@@ -1,0 +1,20 @@
+[Unit]
+Description=ReplyBot Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/<path to>/myenv/bin/python /<path to>/iorethd /<path to>/aprsbot.conf
+WorkingDirectory=/<path to>
+**Environment="VIRTUAL_ENV=/v/myenv"**
+**Environment="PATH=/<path to>/myenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"**
+**Environment="PYTHONPATH=/<path to>/myenv/lib/python3.11/site-packages"**
+StandardOutput=append:/var/log/replybot.err
+StandardError=append:/var/log/replybot.log
+Restart=always
+User=<user>
+
+
+
+[Install]
+WantedBy=multi-user.target
