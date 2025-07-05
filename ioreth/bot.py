@@ -217,20 +217,40 @@ class BotAprsHandler(aprs.Handler):
         return None
 
 
-    def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
-        logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s", source, addressee, text, msgid)
+def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
+    logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
+                source, addressee, text, msgid, via)
+    self._log_audit(
+        direction="recv",
+        source=source,
+        destination=addressee,
+        message=text,
+        msgid=msgid,
+        note=f"Raw message received via {via}"
+    )
+
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
 
         cleaned = self.sanitize_text(text)
 
         # If loopback
         if is_loopback(source, text):
-            if addressee.upper() in self.aliases:
-               # Allow this message, it's a legit message for the alias, even if from direwolf client callsign
-               pass
-            else:
-                logger.debug(f"Ignoring looped-back message from {source}: {text}")
-                return
+        if addressee.upper() in self.aliases:
+            # Allow message to alias
+            logger.debug(f"Allowing looped-back message to alias {addressee}")
+        else:
+            logger.warning(f"Ignoring loopback message from {source} to {addressee}: {text}")
+            self._log_audit(
+                direction="recv",
+                source=source,
+                destination=addressee,
+                message=text,
+                msgid=msgid,
+                rejected=True,
+                note="Loopback detected"
+            )
+            return
+
 
         if cleaned == "rej0":
             logger.debug("Ignoring 'rej0' control message.")
@@ -321,6 +341,15 @@ class BotAprsHandler(aprs.Handler):
         if msgid:
             logger.info(f"Sending ack to message {msgid} from {clean_source}")
             self.send_aprs_msg(clean_source, f"ack{msgid}")
+
+        self._log_audit(
+            direction="recv",
+            source=clean_source,
+            message=cleaned,
+            msgid=msgid,
+            rejected=False,
+            note="Accepted for processing"
+        )
 
 
     def handle_aprs_query(self, source, text, origframe):
@@ -558,9 +587,13 @@ class ReplyBot(AprsClient):
         logger.warning("Disconnected! Will try again soon...")
 
     def on_recv_frame(self, frame):
-        logger.debug("Received frame: %s", frame)
-        #logger.warning("RECV FRAME: %s", frame.to_aprs_string().decode(errors="replace"))
+        logger.debug("Received frame object: %s", frame)
+        try:
+            logger.warning("RECV FRAME: %s", frame.to_aprs_string().decode(errors="replace"))
+        except Exception:
+            logger.warning("RECV FRAME (could not decode)")
         self._aprs.handle_frame(frame)
+
 
     def _update_bulletins(self):
         if not self._cfg.has_section("bulletins"):
