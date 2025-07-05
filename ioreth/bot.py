@@ -24,6 +24,8 @@ import os
 import re
 import random
 import sqlite3
+import difflib
+
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -169,6 +171,47 @@ class BotAprsHandler(aprs.Handler):
         cur.execute("SELECT 1 FROM blacklist WHERE callsign = ?", (callsign,))
         return cur.fetchone() is not None
 
+        KNOWN_COMMANDS = {
+            "CQ": "CQ",
+            "NETMSG": "NETMSG",
+            "NETCHECKOUT": "NETCHECKOUT",
+            "NETUSERS": "NETUSERS",
+            "blacklist_add": "blacklist_add",
+            "blacklist_del": "blacklist_del",
+            "admin_add": "admin_add",
+            "admin_del": "admin_del",
+            "ping": "ping",
+            "?aprst": "?aprst",
+            "?ping?": "?ping?",
+            "version": "version",
+            "time": "time",
+            "help": "help",
+            "moria": "moria",
+            "mellon": "mellon",
+            "mellon!": "mellon!",
+            "meow": "meow",
+            "clacks": "clacks",
+            "73": "73"
+        }
+
+    def detect_and_correct_command(self, input_qry):
+        """
+        Detects typos and returns corrected command from known list if similar enough.
+        """
+        matches = difflib.get_close_matches(input_qry.lower(), self.KNOWN_COMMANDS.keys(), n=1, cutoff=0.8)
+        if matches:
+            return matches[0]
+        return input_qry
+
+
+    def detect_typo_command(self, qry):
+        """
+        Detects typos and suggests known command using fuzzy match.
+        """
+        matches = difflib.get_close_matches(qry, self.KNOWN_COMMANDS.keys(), n=1, cutoff=0.8)
+        if matches:
+            return matches[0]
+        return None
 
 
     def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
@@ -276,39 +319,41 @@ class BotAprsHandler(aprs.Handler):
     def handle_aprs_query(self, source, text, origframe):
         logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
         logger.info("Handling query from %s: %s", source, text)
+
         clean_source = source.replace("*", "")
         text = text.strip()
         text = self.sanitize_text(text)
         qry_args = text.split(" ", 1)
-        qry = qry_args[0].lower()
+        qry = qry_args[0]
         args = qry_args[1] if len(qry_args) == 2 else ""
-        
-        normalized = text.upper()
+
+        corrected_qry = self.detect_and_correct_command(qry)
+        if corrected_qry != qry:
+            logger.info(f"Corrected command from '{qry}' to '{corrected_qry}' for {clean_source}")
+            self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
+            qry = corrected_qry
+
+        normalized = f"{qry} {args}".strip().upper()
 
         if normalized.startswith(f"CQ {self.netname}"):
-            
             match = re.match(rf"^CQ\s+{self.netname}\s+(.+)", text, re.IGNORECASE)
             if match:
                 self._broadcast_to_net(clean_source, match.group(1).strip())
             return
 
         if normalized.startswith(f"NETMSG {self.netname}"):
-            
             match = re.match(rf"^NETMSG\s+{self.netname}\s+(.+)", text, re.IGNORECASE)
             if match:
                 self._broadcast_message(clean_source, match.group(1).strip())
             return
 
         if normalized == f"NETCHECKOUT {self.netname}":
-           
             self._remove_user(clean_source)
             return
 
         if normalized == f"NETUSERS {self.netname}":
-           
             self._send_user_list(clean_source)
             return
-
 
         # Blacklist management - Admin only
         if qry in ("blacklist_add", "blacklist_del"):
@@ -403,7 +448,6 @@ class BotAprsHandler(aprs.Handler):
     def send_aprs_status(self, status):
         self._client.enqueue_frame(self.make_aprs_status(status))
 
-##############
     def _broadcast_message(self, source, message):
         cur = self.db.cursor()
         cur.execute("SELECT callsign FROM erli_users")
@@ -424,8 +468,6 @@ class BotAprsHandler(aprs.Handler):
         reply = "Last 10 users:\n" + ", ".join(row[0] for row in rows) if rows else f"No {self.netname} users heard yet."
         self.send_aprs_msg(source, reply)
         logging.info(f"Sent user list to {source}")
-
-
 
     def send_aprs_msg(self, to_call, text):
         if not self._client.is_connected():
