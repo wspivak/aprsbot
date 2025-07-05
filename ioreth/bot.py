@@ -35,6 +35,28 @@ from . import aprs
 from . import remotecmd
 from . import utils
 
+from collections import deque
+import threading
+
+# Global cache for recently sent messages to prevent processing echoes
+recent_messages = deque()
+recent_lock = threading.Lock()
+
+def cache_sent_message(to_call, message):
+    now = time.monotonic()
+    with recent_lock:
+        recent_messages.append((now, to_call, message))
+        _cleanup_old_entries(now)
+
+def is_loopback(to_call, message):
+    now = time.monotonic()
+    with recent_lock:
+        _cleanup_old_entries(now)
+        return any((t == to_call and m == message) for _, t, m in recent_messages)
+
+def _cleanup_old_entries(current_time, ttl=30):
+    while recent_messages and (current_time - recent_messages[0][0]) > ttl:
+        recent_messages.popleft()
 
 
 def is_br_callsign(callsign):
@@ -154,6 +176,11 @@ class BotAprsHandler(aprs.Handler):
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
 
         cleaned = self.sanitize_text(text)
+
+        # If loopback
+        if is_loopback(source, text):
+            logger.debug(f"Ignoring looped-back message from {source}: {text}")
+            return
 
         if cleaned == "rej0":
             logger.debug("Ignoring 'rej0' control message.")
@@ -410,6 +437,7 @@ class BotAprsHandler(aprs.Handler):
         logger.info("Built APRS frame: %s", frame.to_aprs_string())
         self._client.enqueue_frame(frame)
         logger.info("Frame enqueued to APRS-IS: %s", frame.to_aprs_string())
+        cache_sent_message(to_call, text)
         self._log_audit(
             direction="sent",
             source=self.callsign,
