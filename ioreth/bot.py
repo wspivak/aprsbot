@@ -48,9 +48,17 @@ class BotAprsHandler(aprs.Handler):
         super().__init__(callsign)
         self.callsign = callsign
         self._client = client
-        self.db = sqlite3.connect("erli.db", check_same_thread=False)
-        self._init_db()
+        self.db = None  # placeholder
+        self._dbfile = None
+        self._client = client
+        self.callsign = callsign
         self._load_config()
+        if self._dbfile:
+            self.db = sqlite3.connect(self._dbfile, check_same_thread=False)
+            self._init_db()
+        else:
+            raise ValueError("Missing 'dbfile' in [aprs] config")
+
 
     def _load_config(self):
         cfg = configparser.ConfigParser()
@@ -61,7 +69,15 @@ class BotAprsHandler(aprs.Handler):
         self.aliases.update(
             alias.strip().upper() for alias in aliases_from_config.split(",") if alias.strip()
         )
-
+        self._dbfile = cfg.get("aprs", "dbfile", fallback="erli.db").strip()
+        
+        # ✅ Check DB path access before attempting to connect
+        if not os.path.isfile(self._dbfile):
+            db_dir = os.path.dirname(self._dbfile) or "."
+            if not os.access(db_dir, os.W_OK):
+                raise RuntimeError(f"Cannot write to database directory: {db_dir}")
+                
+        logger.info(f"Using database file: {self._dbfile}")
 
     def _init_db(self):
         cur = self.db.cursor()
@@ -92,20 +108,24 @@ class BotAprsHandler(aprs.Handler):
                 source TEXT,            -- who sent the message or who it's being sent to
                 destination TEXT,       -- where it was going (only for 'sent')
                 message TEXT,           -- content
-                msgid TEXT              -- APRS msgid if available
+                msgid TEXT,              -- APRS msgid if available
+                rejected BOOLEAN DEFAULT 0,
+                note TEXT
             )
         """)
         
         self.db.commit()
         
-    def _log_audit(self, direction, source, destination, message, msgid=None):
+    def _log_audit(self, direction, source, destination, message, msgid=None, rejected=False, note=None):
+
         try:
             cur = self.db.cursor()
             cur.execute("""
-                INSERT INTO audit_log (direction, source, destination, message, msgid)
-                VALUES (?, ?, ?, ?, ?)
-            """, (direction, source, destination, message, msgid))
+              INSERT INTO audit_log (direction, source, destination, message, msgid, rejected, note)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (direction, source, destination, message, msgid, int(rejected), note))
             self.db.commit()
+            
             logger.debug(f"Audit logged: {direction} {source} -> {destination}: {message}")
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
@@ -132,65 +152,99 @@ class BotAprsHandler(aprs.Handler):
     def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
         logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s", source, addressee, text, msgid)
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
+
         cleaned = self.sanitize_text(text)
-        
+
         if cleaned == "rej0":
+            logger.debug("Ignoring 'rej0' control message.")
             return
-        else:    
+        else:
             logger.info(f"Sanitized text: '{cleaned}'")
-            return
-            
+    
         clean_source = source.replace("*", "")
-        logger.info(f"Checking if addressee '{addressee.strip().upper()}' is in aliases: {self.aliases}")
-        if addressee.strip().upper() not in self.aliases:
-            logger.warning(f"Ignoring message to {addressee} — not in aliases: {self.aliases}")
+        upper_addressee = addressee.strip().upper()
+    
+        # Check addressee alias
+        logger.info(f"Checking if addressee '{upper_addressee}' is in aliases: {self.aliases}")
+        if upper_addressee not in self.aliases:
+            logger.warning(f"Ignoring message to {upper_addressee} — not in aliases.")
+            self._log_audit(
+                direction="recv",
+                source=clean_source,
+                destination=upper_addressee,
+                message=cleaned,
+                msgid=msgid,
+                rejected=True,
+                note="Addressee not in aliases"
+            )
             return
-
-        
-
-        # Check if direct source is blacklisted
+    
+        # Direct blacklist check
         if self.is_blacklisted(clean_source):
-            logging.info(f"Ignoring message from blacklisted callsign: {clean_source}")
+            logger.info(f"Ignoring message from blacklisted callsign: {clean_source}")
+            self._log_audit(
+                direction="recv",
+                source=clean_source,
+                destination=upper_addressee,
+                message=cleaned,
+                msgid=msgid,
+                rejected=True,
+                note="Blacklisted direct source"
+            )
             return
-
-        # Check if encapsulated third-party message source is blacklisted
+    
+        # Encapsulated source blacklist check
         if "}" in text:
             try:
                 payload = text.split("}", 1)[1]
-                inner_src = payload.split(">", 1)[0]
-                inner_path = payload.split(">", 1)[1].split(":")[0]
+                if ">" in payload and ":" in payload:
+                    inner_src, rest = payload.split(">", 1)
+                    inner_path = rest.split(":", 1)[0]
+                else:
+                    raise ValueError("Encapsulated frame missing delimiter")
 
+    
                 if self.is_blacklisted(inner_src):
-                    logging.info(f"Ignoring encapsulated message from blacklisted callsign: {inner_src}")
+                    logger.info(f"Ignoring encapsulated message from blacklisted callsign: {inner_src}")
+                    self._log_audit(
+                        direction="recv",
+                        source=inner_src,
+                        destination=upper_addressee,
+                        message=cleaned,
+                        msgid=msgid,
+                        rejected=True,
+                        note="Blacklisted encapsulated source"
+                    )
                     return
-
+    
                 if "TCPIP" in inner_path:
                     force_tcpip_reply = True
-
+    
             except Exception as e:
-                logger.warning("Could not parse inner frame: %s", e)
-                
+                logger.warning("Could not parse encapsulated frame: %s", e)
+    
+        # ✅ Log accepted message
         self._log_audit(
             direction="recv",
             source=clean_source,
-            destination=addressee.strip().upper(),
+            destination=upper_addressee,
             message=cleaned,
             msgid=msgid
         )
-
-
+    
+        # Ignore pure control messages (ack/rej)
         if re.match(r"^(ack|rej)\d+$", cleaned.strip()):
-            logging.info("Ignoring control message %s from %s", cleaned, source)
+            logger.info(f"Ignoring control message '{cleaned}' from {clean_source}")
             return
-
-
-        self.handle_aprs_query(source, cleaned, origframe=origframe)
-
+    
+        # Process user query
+        self.handle_aprs_query(clean_source, cleaned, origframe=origframe)
+    
+        # Send ack if message ID is present
         if msgid:
-            logging.info("Sending ack to message %s from %s.", msgid, source)
-            self.send_aprs_msg(clean_source, "ack" + msgid)
-            
-#    logger.info(f"Sanitized text: '{cleaned}'")
+            logger.info(f"Sending ack to message {msgid} from {clean_source}")
+            self.send_aprs_msg(clean_source, f"ack{msgid}")
+
 
     def handle_aprs_query(self, source, text, origframe):
         logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
@@ -248,22 +302,22 @@ class BotAprsHandler(aprs.Handler):
                 return
                 
         # Admin management - Only admins can add/remove admins
-            if qry in ("admin_add", "admin_del"):
-               if not self.is_admin(clean_source):
-                self.send_aprs_msg(clean_source, "Permission denied: Admins only.")
-                return
+        if qry in ("admin_add", "admin_del"):
+           if not self.is_admin(clean_source):
+            self.send_aprs_msg(clean_source, "Permission denied: Admins only.")
+            return
 
-            if qry == "admin_add" and args:
-                self.db.cursor().execute("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
-                self.db.commit()
-                self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
-                return
+        if qry == "admin_add" and args:
+            self.db.cursor().execute("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
+            self.db.commit()
+            self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
+            return
 
-            if qry == "admin_del" and args:
-                self.db.cursor().execute("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
-                self.db.commit()
-                self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
-                return
+        if qry == "admin_del" and args:
+            self.db.cursor().execute("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
+            self.db.commit()
+            self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
+            return
     
 
         # Standard commands
