@@ -20,7 +20,7 @@ SQLite3 database for users, blacklisted callsigns and admins
 
 Blacklist limited to Admins
 
-No public logging
+No public logging, but an audit trail
 
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
