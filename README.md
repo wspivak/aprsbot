@@ -24,6 +24,8 @@ Public logging via the DB, based on the full audit trail.  Logging handled by gu
 
 Added code to prevent loopback from sent messages
 
+Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tatical callsign (add a cronjob @15min intervals).
+
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
 <b>New/Changed Commands:</b>
