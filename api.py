@@ -4,14 +4,11 @@ import sqlite3
 import re
 
 app = Flask(__name__)
-CORS(app)  # 🔓 Allow all domains; restrict if needed
+CORS(app)  # Enable CORS
 
 DATABASE = 'erli.db'
 
 def trim_aprs_message(message):
-    """
-    Removes 'CQ <word>' or 'NETMSG <word>' from the start of a message, case-insensitive.
-    """
     pattern = r'^(CQ|NETMSG)\s+\S+\s+(.*)'
     match = re.match(pattern, message.strip(), re.IGNORECASE)
     return match.group(2) if match else message
