@@ -20,7 +20,7 @@ SQLite3 database for users, blacklisted callsigns and admins
 
 Blacklist limited to Admins
 
-No public logging, but an audit trail
+Public logging via the DB, based on the full audit trail.  Logging handled by gunicorn, a service is supplied (check paths).
 
 Added code to prevent loopback from sent messages
 
