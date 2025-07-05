@@ -1,0 +1,107 @@
+<html>
+<head>
+</head>
+<body>
+
+<style>
+td {
+	border: 1px solid black;
+	text-align: center;
+} 
+.blurb {
+	display: block;
+	text-align: left !important;
+}
+
+.blurb td {
+    border: 1px solid black;
+    text-align: left !important; /* Override centering */
+    padding-left: 10px; /* Adds slight indentation */
+    width: 100%;
+    display: table-cell;
+}
+
+th {
+	border: 1px solid black;
+	color: white;
+	background-color: maroon;
+}
+table {
+	border-collapse: collapse;
+}
+tr:nth-child(even) {
+	background-color: #f2f2f2;
+}
+
+
+
+a:hover {
+	background-color: maroon;
+	color: white;
+}
+
+a:link {
+	color: #0000EE;
+  	text-decoration: none;
+}
+
+span {
+    background-color: #D3D3D3 !important;
+}
+</style>
+<body>
+        <table width="100%">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Source</th>
+            <th>Destination</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="4">Loading logs...</td></tr>
+        </tbody>
+      </table>
+
+      <script>
+        const API_URL = 'http://192.168.1.156:5000/logs';
+
+        fetch(API_URL)
+          .then(res => {
+            if (!res.ok) throw new Error(`API error: ${res.status}`);
+            return res.json();
+          })
+          .then(data => {
+            const tbody = document.getElementById("log-body");
+            tbody.innerHTML = "";
+            if (data.length === 0) {
+              tbody.innerHTML = "<tr><td colspan='4'>No matching log entries found.</td></tr>";
+              return;
+            }
+
+            for (const row of data) {
+              const tr = document.createElement("tr");
+              const msg = row.message || "";
+              const isHighlight = /cq|netmsg erli/i.test(msg);
+
+              tr.className = isHighlight ? "highlight" : "";
+              tr.innerHTML = `
+                <td>${row.timestamp}</td>
+                <td>${row.source}</td>
+                <td>${row.destination}</td>
+                <td>${msg}</td>
+              `;
+              tbody.appendChild(tr);
+            }
+          })
+          .catch(err => {
+            document.getElementById("log-body").innerHTML = `<tr><td colspan="4">Error: ${err.message}</td></tr>`;
+            console.error("Failed to load logs:", err);
+          });
+      </script>
+    </td>
+  </tr>
+</table>
+  /body>
+</html>
