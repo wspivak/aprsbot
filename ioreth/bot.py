@@ -66,6 +66,31 @@ def is_br_callsign(callsign):
 
 
 class BotAprsHandler(aprs.Handler):
+
+    KNOWN_COMMANDS = {
+        "cq": "CQ",
+        "netmsg": "NETMSG",
+        "netcheckout": "NETCHECKOUT",
+        "netusers": "NETUSERS",
+        "blacklist_add": "blacklist_add",
+        "blacklist_del": "blacklist_del",
+        "admin_add": "admin_add",
+        "admin_del": "admin_del",
+        "ping": "ping",
+        "?aprst": "?aprst",
+        "?ping?": "?ping?",
+        "version": "version",
+        "time": "time",
+        "help": "help",
+    }
+
+    def exec_db(self, query, args=()):
+        try:
+            cur = self.db.cursor()
+            cur.execute(query, args)
+            self.db.commit()
+        except Exception as e:
+            logger.error(f"DB error: {e}")
     
 
     def __init__(self, callsign, client):
@@ -171,28 +196,6 @@ class BotAprsHandler(aprs.Handler):
         cur.execute("SELECT 1 FROM blacklist WHERE callsign = ?", (callsign,))
         return cur.fetchone() is not None
 
-        KNOWN_COMMANDS = {
-            "CQ": "CQ",
-            "NETMSG": "NETMSG",
-            "NETCHECKOUT": "NETCHECKOUT",
-            "NETUSERS": "NETUSERS",
-            "blacklist_add": "blacklist_add",
-            "blacklist_del": "blacklist_del",
-            "admin_add": "admin_add",
-            "admin_del": "admin_del",
-            "ping": "ping",
-            "?aprst": "?aprst",
-            "?ping?": "?ping?",
-            "version": "version",
-            "time": "time",
-            "help": "help",
-            "moria": "moria",
-            "mellon": "mellon",
-            "mellon!": "mellon!",
-            "meow": "meow",
-            "clacks": "clacks",
-            "73": "73"
-        }
 
     def detect_and_correct_command(self, input_qry):
         """
@@ -327,11 +330,17 @@ class BotAprsHandler(aprs.Handler):
         qry = qry_args[0]
         args = qry_args[1] if len(qry_args) == 2 else ""
 
-        corrected_qry = self.detect_and_correct_command(qry)
-        if corrected_qry != qry:
+        qry_lower = qry.lower()
+        corrected_qry = self.detect_and_correct_command(qry_lower)
+
+        if corrected_qry != qry_lower:
             logger.info(f"Corrected command from '{qry}' to '{corrected_qry}' for {clean_source}")
             self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
-            qry = corrected_qry
+            qry_lower = corrected_qry
+
+        elif qry_lower not in self.KNOWN_COMMANDS:
+            self.send_aprs_msg(clean_source, f"Unknown command '{qry}'. Send 'help' for valid commands.")
+            return
 
         normalized = f"{qry} {args}".strip().upper()
 
@@ -356,38 +365,23 @@ class BotAprsHandler(aprs.Handler):
             return
 
         # Blacklist management - Admin only
-        if qry in ("blacklist_add", "blacklist_del"):
-            if not self.is_admin(clean_source):
-                self.send_aprs_msg(clean_source, "Permission denied: Admins only.")
-                return
-
-            if qry == "blacklist_add" and args:
-                self.db.cursor().execute("INSERT OR IGNORE INTO blacklist (callsign) VALUES (?)", (args.upper(),))
-                self.db.commit()
-                self.send_aprs_msg(clean_source, f"{args.upper()} has been blacklisted.")
-                return
-
-            if qry == "blacklist_del" and args:
-                self.db.cursor().execute("DELETE FROM blacklist WHERE callsign = ?", (args.upper(),))
-                self.db.commit()
-                self.send_aprs_msg(clean_source, f"{args.upper()} removed from blacklist.")
-                return
-                
-        # Admin management - Only admins can add/remove admins
-        if qry in ("admin_add", "admin_del"):
-           if not self.is_admin(clean_source):
-            self.send_aprs_msg(clean_source, "Permission denied: Admins only.")
+        if qry_lower == "blacklist_add" and args:
+            self.exec_db("INSERT OR IGNORE INTO blacklist (callsign) VALUES (?)", (args.upper(),))
+            self.send_aprs_msg(clean_source, f"{args.upper()} has been blacklisted.")
             return
 
-        if qry == "admin_add" and args:
-            self.db.cursor().execute("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
-            self.db.commit()
+        if qry_lower == "blacklist_del" and args:
+            self.exec_db("DELETE FROM blacklist WHERE callsign = ?", (args.upper(),))
+            self.send_aprs_msg(clean_source, f"{args.upper()} removed from blacklist.")
+            return
+
+        if qry_lower == "admin_add" and args:
+            self.exec_db("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
             self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
             return
 
-        if qry == "admin_del" and args:
-            self.db.cursor().execute("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
-            self.db.commit()
+        if qry_lower == "admin_del" and args:
+            self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
             self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
             return
     
@@ -412,17 +406,7 @@ class BotAprsHandler(aprs.Handler):
         elif qry == "help":
             
             self.send_aprs_msg(clean_source, "Commands: ping, version, time, help, blacklist_add <CALL>, blacklist_del <CALL>")
-        elif qry in {
-            "moria", "mellon", "mellon!", "meow", "clacks", "73"
-        }:
-            replies = {
-                "moria": "Pedo mellon a minno",
-                "mellon": "*door opens*",
-                "mellon!": "**door opens**  🚶🚶🚶  💍→🌋",
-                "meow": "=^.^=  purr purr  =^.^=",
-                "clacks": "GNU Terry Pratchett",
-                "73": "73 🖖"
-            }
+
             
             self.send_aprs_msg(clean_source, replies[qry])
         else:
