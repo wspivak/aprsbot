@@ -4,6 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
+# I found that the bot couldn't find the network when it first started, thus added a delay
+ExecStartPre=/bin/sleep 30
 ExecStart=/<path to>/myenv/bin/python /<path to>/iorethd /<path to>/aprsbot.conf
 WorkingDirectory=/<path to>
 **Environment="VIRTUAL_ENV=/v/myenv"**
