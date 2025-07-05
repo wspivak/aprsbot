@@ -128,6 +128,15 @@ class BotAprsHandler(aprs.Handler):
                 
         logger.info(f"Using database file: {self._dbfile}")
 
+    def beacon_as_erli(self, text="ERLI tactical alias active"):
+        """Send a status beacon as 'ERLI' so APRS-IS learns the alias."""
+        original_callsign = self.callsign
+        self.callsign = "ERLI"  # temporarily pretend we're ERLI
+        frame = self.make_aprs_status(text)
+        self._client.enqueue_frame(frame)
+        logger.info(f"Beaconed as ERLI: {text}")
+        self.callsign = original_callsign
+
     def _init_db(self):
         cur = self.db.cursor()
         cur.execute("""
@@ -235,21 +244,21 @@ class BotAprsHandler(aprs.Handler):
 
         # If loopback
         if is_loopback(source, text):
-        if addressee.upper() in self.aliases:
-            # Allow message to alias
-            logger.debug(f"Allowing looped-back message to alias {addressee}")
-        else:
-            logger.warning(f"Ignoring loopback message from {source} to {addressee}: {text}")
-            self._log_audit(
-                direction="recv",
-                source=source,
-                destination=addressee,
-                message=text,
-                msgid=msgid,
-                rejected=True,
-                note="Loopback detected"
-            )
-            return
+            if addressee.upper() in self.aliases:
+                # Allow message to alias
+                logger.debug(f"Allowing looped-back message to alias {addressee}")
+            else:
+                logger.warning(f"Ignoring loopback message from {source} to {addressee}: {text}")
+                self._log_audit(
+                    direction="recv",
+                    source=source,
+                    destination=addressee,
+                    message=text,
+                    msgid=msgid,
+                    rejected=True,
+                    note="Loopback detected"
+                )
+                return
 
 
         if cleaned == "rej0":
@@ -465,6 +474,8 @@ class BotAprsHandler(aprs.Handler):
 
     def send_aprs_status(self, status):
         self._client.enqueue_frame(self.make_aprs_status(status))
+        self.send_aprs_msg("APRS", ">ERLI is active here at KC2NJV-4.")
+
 
     def _broadcast_message(self, source, message):
         cur = self.db.cursor()
@@ -732,6 +743,14 @@ class ReplyBot(AprsClient):
         self._update_bulletins()
         self._update_status()
 
+        # 🌐 Beacon as ERLI every 15 minutes or so    
+        now = time.monotonic()
+        if not hasattr(self, "_last_erli_beacon"):
+            self._last_erli_beacon = 0
+        if now - self._last_erli_beacon > 900:  # 15 minutes
+            self._last_erli_beacon = now
+            self._aprs.beacon_as_erli("ERLI tactical alias for KC2NJV-4")
+            
         # Poll results from external commands, if any.
         while True:
             rcmd = self._rem.poll_ret()
