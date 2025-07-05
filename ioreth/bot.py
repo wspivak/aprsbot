@@ -217,17 +217,17 @@ class BotAprsHandler(aprs.Handler):
         return None
 
 
-def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
-    logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
-                source, addressee, text, msgid, via)
-    self._log_audit(
-        direction="recv",
-        source=source,
-        destination=addressee,
-        message=text,
-        msgid=msgid,
-        note=f"Raw message received via {via}"
-    )
+    def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
+        logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
+                    source, addressee, text, msgid, via)
+        self._log_audit(
+            direction="recv",
+            source=source,
+            destination=addressee,
+            message=text,
+            msgid=msgid,
+            note=f"Raw message received via {via}"
+        )
 
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
 
