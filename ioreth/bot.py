@@ -225,8 +225,12 @@ class BotAprsHandler(aprs.Handler):
 
         # If loopback
         if is_loopback(source, text):
-            logger.debug(f"Ignoring looped-back message from {source}: {text}")
-            return
+            if addressee.upper() in self.aliases:
+               # Allow this message, it's a legit message for the alias, even if from direwolf client callsign
+               pass
+            else:
+                logger.debug(f"Ignoring looped-back message from {source}: {text}")
+                return
 
         if cleaned == "rej0":
             logger.debug("Ignoring 'rej0' control message.")
@@ -343,6 +347,7 @@ class BotAprsHandler(aprs.Handler):
             return
 
         normalized = f"{corrected_qry} {args}".strip().upper()
+
 
         if normalized.startswith(f"CQ {self.netname}"):
             match = re.match(rf"^CQ\s+{self.netname}\s+(.+)", text, re.IGNORECASE)
