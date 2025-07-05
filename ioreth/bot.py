@@ -342,7 +342,7 @@ class BotAprsHandler(aprs.Handler):
             self.send_aprs_msg(clean_source, f"Unknown command '{qry}'. Send 'help' for valid commands.")
             return
 
-        normalized = f"{qry} {args}".strip().upper()
+        normalized = f"{corrected_qry} {args}".strip().upper()
 
         if normalized.startswith(f"CQ {self.netname}"):
             match = re.match(rf"^CQ\s+{self.netname}\s+(.+)", text, re.IGNORECASE)
