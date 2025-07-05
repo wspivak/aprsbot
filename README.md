@@ -22,6 +22,8 @@ Blacklist limited to Admins
 
 No public logging, but an audit trail
 
+Added code to prevent loopback from sent messages
+
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
 <b>New/Changed Commands:</b>
