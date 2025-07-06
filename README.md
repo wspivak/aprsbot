@@ -26,6 +26,8 @@ Added code to prevent loopback from sent messages
 
 Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tatical callsign (add a cronjob @15min intervals).
 
+Added a script to trim audit_log in SQLite3 db.  Juas add a cron job.
+
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
 <b>New/Changed Commands:</b>
