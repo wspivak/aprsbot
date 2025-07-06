@@ -1,7 +1,7 @@
 
-# About (from the orginal)
+# About (from the original)
 
-Ioreth is a **very experimental** APRS bot. There is a lot f things to be
+Ioreth is a **very experimental** APRS bot. There are a lot of things to be
 done yet, including writing the documentation. For now, you are welcome to
 use it as you want.
 
@@ -14,7 +14,7 @@ other uses are only subjected to the GNU GPLv3+ (see license bellow).
 Connecting this program to the APRS-IS network also requires a license as
 you will be, effectively, operating remote transmitters through the Internet.
 
-# Updates to orginal
+# Updates to original
 
 SQLite3 database for users, blacklisted callsigns and admins
 
@@ -24,9 +24,9 @@ Public logging via the DB, based on the full audit trail.  Logging handled by gu
 
 Added code to prevent loopback from sent messages
 
-Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tatical callsign (add a cronjob @15min intervals).
+Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tactical callsign (add a cronjob @15min intervals).
 
-Added a script to trim audit_log in SQLite3 db.  Juas add a cron job.
+Added a script to trim audit_log in SQLite3 db.  Just add a cron job.
 
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
