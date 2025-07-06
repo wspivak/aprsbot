@@ -24,13 +24,16 @@ Public logging via the DB, based on the full audit trail.  Logging handled by gu
 
 Added code to prevent loopback from sent messages
 
+Configurable in aprsbot.conf:
+Added configurable Welcome message for new subscribers
+Callsign, Callsign Alias, List Names, DB name.
+
+
 Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tactical callsign (add a cronjob @15min intervals).
 
 Added a script to trim audit_log in SQLite3 db.  Just add a cron job.
 
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
-
-Added configurable Welcome message for new subscribers
 
 <b>New/Changed Commands:</b>
 
