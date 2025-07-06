@@ -396,8 +396,24 @@ class BotAprsHandler(aprs.Handler):
         if normalized.startswith(f"NETMSG {self.netname}"):
             match = re.match(rf"^NETMSG\s+{self.netname}\s+(.+)", text, re.IGNORECASE)
             if match:
+                cur = self.db.cursor()
+                cur.execute("SELECT 1 FROM erli_users WHERE callsign = ?", (clean_source,))
+                if not cur.fetchone():
+                    self._log_audit(
+                        direction="recv",
+                        source=clean_source,
+                        destination=self.callsign,
+                        message=text,
+                        msgid=None,
+                        rejected=True,
+                        note="NETMSG attempt by unregistered user"
+                    )
+                    self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
+                    return
+
                 self._broadcast_message(clean_source, match.group(1).strip())
             return
+
 
         if normalized == f"NETCHECKOUT {self.netname}":
             self._remove_user(clean_source)
