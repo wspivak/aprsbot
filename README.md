@@ -30,6 +30,8 @@ Added a script to trim audit_log in SQLite3 db.  Just add a cron job.
 
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
+Added configurable Welcome message for new subscribers
+
 <b>New/Changed Commands:</b>
 
 <b>NOTE:</b> Commands are not case sensitive (given my radios, that would be insane :) )
