@@ -14,7 +14,7 @@ other uses are only subjected to the GNU GPLv3+ (see license bellow).
 Connecting this program to the APRS-IS network also requires a license as
 you will be, effectively, operating remote transmitters through the Internet.
 
-# Updates to original
+# Updates to original (by Wayne Spivak, KC2NJV)
 
 SQLite3 database for users, blacklisted callsigns and admins
 
