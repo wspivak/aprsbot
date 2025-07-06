@@ -1,16 +1,17 @@
 [Unit]
 Description=ReplyBot Service
-After=network.target
+Wants=network-online.target direwolf.service
+After=network-online.target direwolf.service
 
 [Service]
 Type=simple
 # I found that the bot couldn't find the network when it first started, thus added a delay
-ExecStartPre=/bin/sleep 30
+ExecStartPre=/bin/sleep 15
 ExecStart=/<path to>/myenv/bin/python /<path to>/iorethd /<path to>/aprsbot.conf
 WorkingDirectory=/<path to>
-**Environment="VIRTUAL_ENV=/v/myenv"**
+**Environment="VIRTUAL_ENV=/<path to>/myenv"**
 **Environment="PATH=/<path to>/myenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"**
-**Environment="PYTHONPATH=/<path to>/myenv/lib/python3.11/site-packages"**
+Environment="PYTHONPATH=/opt/aprsbot"
 StandardOutput=append:/var/log/replybot.err
 StandardError=append:/var/log/replybot.log
 Restart=always
