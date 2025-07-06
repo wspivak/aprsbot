@@ -1,4 +1,4 @@
-#
+#e49bff5
 # Ioreth - An APRS library and bot
 # Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
 #
@@ -64,72 +64,71 @@ def _cleanup_old_entries(current_time, ttl=30):
 def is_br_callsign(callsign):
     return bool(re.match("P[PTUY][0-9].+", callsign.upper()))
 
-
 class BotAprsHandler(aprs.Handler):
-
     KNOWN_COMMANDS = {
-        "cq": "CQ",
-        "netmsg": "NETMSG",
+        "cq":          "CQ",
+        "netmsg":      "NETMSG",
         "netcheckout": "NETCHECKOUT",
-        "netusers": "NETUSERS",
+        "netusers":    "NETUSERS",
         "blacklist_add": "blacklist_add",
         "blacklist_del": "blacklist_del",
-        "admin_add": "admin_add",
-        "admin_del": "admin_del",
-        "ping": "ping",
-        "?aprst": "?aprst",
-        "?ping?": "?ping?",
-        "version": "version",
-        "time": "time",
-        "help": "help",
+        "admin_add":     "admin_add",
+        "admin_del":     "admin_del",
+        "ping":       "ping",
+        "?aprst":     "?aprst",
+        "?ping?":     "?ping?",
+        "version":    "version",
+        "time":       "time",
+        "help":       "help",
     }
 
-    def exec_db(self, query, args=()):
-        try:
-            cur = self.db.cursor()
-            cur.execute(query, args)
-            self.db.commit()
-        except Exception as e:
-            logger.error(f"DB error: {e}")
-    
-
-    def __init__(self, callsign, client):
+    def __init__(self, callsign, client, config_file="aprsbot.conf"):
+        """
+        callsign      – your APRS callsign
+        client        – the AprsClient instance
+        config_file   – path to the aprsbot.conf file
+        """
         super().__init__(callsign)
-        self.callsign = callsign
-        self._client = client
-        self.db = None  # placeholder
-        self._dbfile = None
-        self._client = client
-        self.callsign = callsign
-        self._load_config()
-        if self._dbfile:
-            self.db = sqlite3.connect(self._dbfile, check_same_thread=False)
-            self._init_db()
-        else:
-            raise ValueError("Missing 'dbfile' in [aprs] config")
+        self.callsign      = callsign
+        self._client       = client
+        self._config_file  = config_file
 
+        self.db       = None
+        self._dbfile  = None
+
+        # load netname, aliases, dbfile
+        self._load_config()
+
+        # open or create SQLite DB
+        if not self._dbfile:
+            raise ValueError("Missing 'dbfile' in [aprs] config")
+        self.db = sqlite3.connect(self._dbfile, check_same_thread=False)
+        self._init_db()
 
     def _load_config(self):
         cfg = configparser.ConfigParser()
-        cfg.read("aprsbot.conf")
+        # ← use the passed-in filename, not a literal
+        cfg.read(self._config_file)
+
         self.netname = cfg.get("aprs", "netname").strip().upper()
-        self.aliases = {self.callsign.upper()}
+        self.aliases = { self.callsign.upper() }
         aliases_from_config = cfg.get("aprs", "aliases", fallback="")
         self.aliases.update(
-            alias.strip().upper() for alias in aliases_from_config.split(",") if alias.strip()
+            alias.strip().upper()
+            for alias in aliases_from_config.split(",")
+            if alias.strip()
         )
+
         self._dbfile = cfg.get("aprs", "dbfile", fallback="erli.db").strip()
-        
-        # ✅ Check DB path access before attempting to connect
-        if not os.path.isfile(self._dbfile):
-            db_dir = os.path.dirname(self._dbfile) or "."
-            if not os.access(db_dir, os.W_OK):
-                raise RuntimeError(f"Cannot write to database directory: {db_dir}")
-                
-            logger.info(f"Using database file: {self._dbfile}")
-                    self.welcome_message = cfg.get(
-                "aprs", "welcome_message", fallback=""
-            ).strip()
+
+        # ensure directory exists & is writable
+        db_dir = os.path.dirname(self._dbfile) or "."
+        if not os.path.isdir(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+        if not os.access(db_dir, os.W_OK):
+            raise RuntimeError(f"Cannot write to database directory: {db_dir}")
+
+        logger.info(f"Using database file: {self._dbfile}")
 
 
     def beacon_as_erli(self, text="ERLI tactical alias active"):
@@ -177,7 +176,15 @@ class BotAprsHandler(aprs.Handler):
         """)
         
         self.db.commit()
-        
+ 
+    def exec_db(self, query, args=()):
+        try:
+            cur = self.db.cursor()
+            cur.execute(query, args)
+            self.db.commit()
+        except Exception as e:
+            logger.error(f"DB error: {e}")
+ 
     def _log_audit(self, direction, source, destination, message, msgid=None, rejected=False, note=None):
 
         try:
@@ -210,15 +217,12 @@ class BotAprsHandler(aprs.Handler):
         return cur.fetchone() is not None
 
 
-    def detect_and_correct_command(self, input_qry):
-        """
-        Detects typos and returns corrected command from known list if similar enough.
-        """
-        matches = difflib.get_close_matches(input_qry.lower(), self.KNOWN_COMMANDS.keys(), n=1, cutoff=0.8)
-        if matches:
-            return matches[0]
-        return input_qry
 
+    def detect_and_correct_command(self, input_qry):
+        matches = difflib.get_close_matches(input_qry, self.KNOWN_COMMANDS, n=1, cutoff=0.8)
+        if matches:
+            return self.KNOWN_COMMANDS[matches[0]]
+        return input_qry
 
     def detect_typo_command(self, qry):
         """
@@ -233,14 +237,14 @@ class BotAprsHandler(aprs.Handler):
     def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
         logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
                     source, addressee, text, msgid, via)
-        self._log_audit(
-            direction="recv",
-            source=source,
-            destination=addressee,
-            message=text,
-            msgid=msgid,
-            note=f"Raw message received via {via}"
-        )
+#        self._log_audit(
+#            direction="recv",
+#            source=source,
+#            destination=addressee,
+#            message=text,
+#            msgid=msgid,
+#            note=f"Raw message received via {via}"
+#        )
 
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
 
@@ -333,15 +337,6 @@ class BotAprsHandler(aprs.Handler):
             except Exception as e:
                 logger.warning("Could not parse encapsulated frame: %s", e)
     
-        # ✅ Log accepted message
-        self._log_audit(
-            direction="recv",
-            source=clean_source,
-            destination=upper_addressee,
-            message=cleaned,
-            msgid=msgid
-        )
-    
         # Ignore pure control messages (ack/rej)
         if re.match(r"^(ack|rej)\d+$", cleaned.strip()):
             logger.info(f"Ignoring control message '{cleaned}' from {clean_source}")
@@ -358,6 +353,7 @@ class BotAprsHandler(aprs.Handler):
         self._log_audit(
             direction="recv",
             source=clean_source,
+            destination=upper_addressee,
             message=cleaned,
             msgid=msgid,
             rejected=False,
@@ -368,6 +364,10 @@ class BotAprsHandler(aprs.Handler):
     def handle_aprs_query(self, source, text, origframe):
         logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
         logger.info("Handling query from %s: %s", source, text)
+        
+        replies = {
+            "help": "Commands: ping, version, time, help, blacklist_add <CALL>, blacklist_del <CALL>"
+        }
 
         clean_source = source.replace("*", "")
         text = text.strip()
@@ -467,10 +467,7 @@ class BotAprsHandler(aprs.Handler):
            
             self.send_aprs_msg(clean_source, "Localtime is " + time.strftime("%Y-%m-%d %H:%M:%S UTC%Z"))
         elif qry == "help":
-            
-            self.send_aprs_msg(clean_source, "Commands: ping, version, time, help, blacklist_add <CALL>, blacklist_del <CALL>")
-
-            
+ 
             self.send_aprs_msg(clean_source, replies[qry])
         else:
             
@@ -482,25 +479,15 @@ class BotAprsHandler(aprs.Handler):
     def _broadcast_to_net(self, source, payload):
         cur = self.db.cursor()
         cur.execute("SELECT 1 FROM erli_users WHERE callsign = ?", (source,))
-        new_user = not cur.fetchone()
-
-        if new_user:
+        if not cur.fetchone():
             cur.execute("INSERT INTO erli_users (callsign) VALUES (?)", (source,))
             logging.info(f"Added {source} to {self.netname} heard list")
-            if self.welcome_message:
-                message = self.welcome_message.format(
-                    netname=self.netname,
-                    callsign=source
-                )
-                self.send_aprs_msg(source, message)
-
         self.db.commit()
 
         cur.execute("SELECT callsign FROM erli_users")
         for callsign, in cur.fetchall():
             msg = f"<{source}> {payload}"
             self.send_aprs_msg(callsign, msg)
-
 
     def send_aprs_status(self, status):
         self._client.enqueue_frame(self.make_aprs_status(status))
@@ -577,18 +564,31 @@ class SystemStatusCommand(remotecmd.BaseRemoteCommand):
 
 class ReplyBot(AprsClient):
     def __init__(self, config_file):
-        AprsClient.__init__(self)
-        self._aprs = BotAprsHandler("", self)
+        # 1) call parent ctor
+        super().__init__()
+
+        # 2) record the config path immediately
         self._config_file = config_file
+
+        # 3) prepare config‐watcher state
         self._config_mtime = None
         self._cfg = configparser.ConfigParser()
-        self._cfg.optionxform = str  # config is case-sensitive
-        self._check_updated_config()
-        self._last_blns = time.monotonic()
-        self._last_cron_blns = 0
-        self._last_status = time.monotonic()
+        self._cfg.optionxform = str     # keep case sensitivity
+
+        # 4) instantiate the APRS handler with the config path
+        #    (empty callsign for now; real one will be set in _load_config)
+        self._aprs = BotAprsHandler("", self, config_file=self._config_file)
+
+        # 5) other state
+        self._last_blns            = time.monotonic()
+        self._last_cron_blns       = 0
+        self._last_status          = time.monotonic()
         self._last_reconnect_attempt = 0
-        self._rem = remotecmd.RemoteCommandHandler()
+        self._rem                  = remotecmd.RemoteCommandHandler()
+
+        # 6) now read the config and wire everything up
+        self._check_updated_config()
+
 
     def _load_config(self):
         try:
@@ -602,7 +602,7 @@ class ReplyBot(AprsClient):
             path = self._cfg["aprs"]["path"]
 
             # Initialize the APRS handler with the proper callsign and path
-            self._aprs = BotAprsHandler(callsign, self)
+            self._aprs = BotAprsHandler(callsign, self, config_file=self._config_file)
             self._aprs.path = path
 
             logger.info(f"Bot initialized with callsign: {self._aprs.callsign}, aliases: {self._aprs.aliases}")
@@ -734,11 +734,9 @@ class ReplyBot(AprsClient):
 #        logger.info(f"Type of self._last_status: {type(self._last_status)}, value: {self._last_status}")
 #        logger.info(f"Type of max_age: {type(max_age)}, value: {max_age}")
         try:
-            self._last_blns = float(self._last_blns)
+            self._last_status = float(self._last_status)
         except Exception:
-            self._last_blns = 0.0
-
-
+            self._last_status = 0.0
 
         if now_mono < (self._last_status + max_age):
             return
@@ -750,16 +748,15 @@ class ReplyBot(AprsClient):
 #        logger.debug(f"last reconnect attempt type: {type(self._last_reconnect_attempt)}")
 #        logger.info(f"Type of self._last_reconnect_attempt: {type(self._last_reconnect_attempt)}, value: {self._last_reconnect_attempt}")
         try:
-            self._last_blns = float(self._last_blns)
+            self._last_reconnect_attempt = float(self._last_reconnect_attempt)
         except Exception:
-            self._last_blns = 0.0
+            self._last_reconnect_attempt = 0.0
 
         if self.is_connected():
-#            logger.info("I'm Connected")
             return
+
         try:
-            # Server is in localhost, no need for a fancy exponential backoff.
-            if time.monotonic() > self._last_reconnect_attempt + 5:
+            if time.monotonic() > self._last_reconnect_attempt + 5: 
                 logger.info("Trying to reconnect")
                 self._last_reconnect_attempt = time.monotonic()
                 self.connect()
