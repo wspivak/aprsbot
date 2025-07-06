@@ -126,10 +126,10 @@ class BotAprsHandler(aprs.Handler):
             if not os.access(db_dir, os.W_OK):
                 raise RuntimeError(f"Cannot write to database directory: {db_dir}")
                 
-        logger.info(f"Using database file: {self._dbfile}")
-                self.welcome_message = cfg.get(
-            "aprs", "welcome_message", fallback=""
-        ).strip()
+            logger.info(f"Using database file: {self._dbfile}")
+                    self.welcome_message = cfg.get(
+                "aprs", "welcome_message", fallback=""
+            ).strip()
 
 
     def beacon_as_erli(self, text="ERLI tactical alias active"):
