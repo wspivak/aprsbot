@@ -127,6 +127,10 @@ class BotAprsHandler(aprs.Handler):
                 raise RuntimeError(f"Cannot write to database directory: {db_dir}")
                 
         logger.info(f"Using database file: {self._dbfile}")
+                self.welcome_message = cfg.get(
+            "aprs", "welcome_message", fallback=""
+        ).strip()
+
 
     def beacon_as_erli(self, text="ERLI tactical alias active"):
         """Send a status beacon as 'ERLI' so APRS-IS learns the alias."""
@@ -478,15 +482,25 @@ class BotAprsHandler(aprs.Handler):
     def _broadcast_to_net(self, source, payload):
         cur = self.db.cursor()
         cur.execute("SELECT 1 FROM erli_users WHERE callsign = ?", (source,))
-        if not cur.fetchone():
+        new_user = not cur.fetchone()
+
+        if new_user:
             cur.execute("INSERT INTO erli_users (callsign) VALUES (?)", (source,))
             logging.info(f"Added {source} to {self.netname} heard list")
+            if self.welcome_message:
+                message = self.welcome_message.format(
+                    netname=self.netname,
+                    callsign=source
+                )
+                self.send_aprs_msg(source, message)
+
         self.db.commit()
 
         cur.execute("SELECT callsign FROM erli_users")
         for callsign, in cur.fetchall():
             msg = f"<{source}> {payload}"
             self.send_aprs_msg(callsign, msg)
+
 
     def send_aprs_status(self, status):
         self._client.enqueue_frame(self.make_aprs_status(status))
