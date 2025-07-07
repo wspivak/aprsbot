@@ -16,6 +16,10 @@ you will be, effectively, operating remote transmitters through the Internet.
 
 # Updates to original (by Wayne Spivak, KC2NJV)
 
+<b>MAJOR NOTE:</b>  I don't think there is anything hard-coded in Bot.py (some fallbacks), everything is in aprsbot.conf.  ALSO look at *.service to configure those files. 
+
+<b>Installation:</b> Copy to a directory du jour (suggest /opt/aprsbot), configure and enjoy.
+
 SQLite3 database for users, blacklisted callsigns and admins
 
 Blacklist limited to Admins
