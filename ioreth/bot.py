@@ -513,7 +513,7 @@ class BotAprsHandler(aprs.Handler):
         self._client.enqueue_frame(self.make_aprs_status(status))
         # This call seems to send a separate message from the status update itself
         # Consider if this should also be subject to audit logging or if it's a special system message
-        self.send_aprs_msg("APRS", ">ERLI is active here at KC2NJV-4.", is_ack=False)
+        self.send_aprs_msg("APRS", ">beacon_alias is active here at callsign.", is_ack=False)
 
 
     def _broadcast_message(self, source, message):
@@ -803,7 +803,7 @@ class ReplyBot(AprsClient):
             self._last_erli_beacon = 0
         if now - self._last_erli_beacon > 900:  # 15 minutes
             self._last_erli_beacon = now
-            self._aprs.beacon_as_erli("ERLI tactical alias for KC2NJV-4")
+            self._aprs.beacon_as_erli("beacon_alias tactical alias for callsign")
             
         # Poll results from external commands, if any.
         while True:
