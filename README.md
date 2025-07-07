@@ -55,7 +55,7 @@ NETUSERS [space] [listname] <-- list of users
 
 NETCHECKOUT [space] [listname] <-- to leave the list.
 
-<b>Special Thanks to:</b>
+# Special Thanks to:
 
 Ben Jackson, N1WBV for his assistance!!!!
 
