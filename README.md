@@ -35,6 +35,7 @@ Added configurable Welcome message for new subscribers
 Callsign, Callsign Alias, List Names, DB name.
 Configurable Beacon text
 Configurable Known Commands
+Configurable NetCheckOut stanza
 
 Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tactical callsign (add a cronjob @15min intervals).
 
