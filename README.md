@@ -16,7 +16,7 @@ you will be, effectively, operating remote transmitters through the Internet.
 
 # Updates to original (by Wayne Spivak, KC2NJV)
 
-<b>MAJOR NOTE:</b>  I don't think there is anything hard-coded in Bot.py (some fallbacks), everything is in aprsbot.conf.  ALSO look at *.service to configure those files. 
+<b>MAJOR NOTE:</b>  I don't think there is anything hard-coded in Bot.py (some fallbacks), everything is in aprsbot.conf.  ALSO look at *.service to configure those files. The bot is configured to handle only a single net at a time.
 
 <b>Installation:</b> Copy to a directory du jour (suggest /opt/aprsbot), configure and enjoy.
 
