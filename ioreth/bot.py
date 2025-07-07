@@ -83,6 +83,10 @@ class BotAprsHandler(aprs.Handler):
         # This will map user-typed command (lowercase) to its canonical name
         self.KNOWN_COMMANDS = {}
 
+        # START CHANGE: Add a placeholder for the configurable response
+        self.netcheckout_response = "NETCheckOUT Successful" # Default value
+        # END CHANGE
+        
         # load netname, aliases, dbfile, and commands
         self._load_config()
 
@@ -121,6 +125,10 @@ class BotAprsHandler(aprs.Handler):
              
         self.beacon_message_template = cfg.get("aprs", "beacon_message", fallback="APRS Bot active").strip()
         self.user_defined_beacon_alias = cfg.get("aprs", "beacon_alias", fallback="NoAlias").strip()
+
+        # START CHANGE: Load configurable responses
+        self.netcheckout_response = cfg.get("responses", "netcheckout_success", fallback="NETCheckOUT Successful").strip()
+        # END CHANGE
         
         # ensure directory exists & is writable
         db_dir = os.path.dirname(self._dbfile) or "."
@@ -506,8 +514,11 @@ class BotAprsHandler(aprs.Handler):
         self.db.cursor().execute("DELETE FROM erli_users WHERE callsign = ?", (source,))
         self.db.commit()
         logging.info(f"Removed {source} from {self.netname}")
-        self.send_aprs_msg(source, "NETCheckOUT Successful", is_ack=False)
-
+#        self.send_aprs_msg(source, "NETCheckOUT Successful", is_ack=False)
+        # START CHANGE: Use the configurable response here
+        self.send_aprs_msg(source, self.netcheckout_response, is_ack=False)
+        # END CHANGE
+        
     def _send_user_list(self, source):
         cur = self.db.cursor()
         cur.execute("SELECT callsign FROM erli_users ORDER BY timestamp DESC LIMIT 10")
