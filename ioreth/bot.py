@@ -1,4 +1,3 @@
-#e49bff5
 # Ioreth - An APRS library and bot
 # Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
 #
@@ -236,25 +235,27 @@ class BotAprsHandler(aprs.Handler):
 
     def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
         logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
-                    source, addressee, text, msgid, via)
-#        self._log_audit(
-#            direction="recv",
-#            source=source,
-#            destination=addressee,
-#            message=text,
-#            msgid=msgid,
-#            note=f"Raw message received via {via}"
-#        )
-
+                            source, addressee, text, msgid, via)
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
 
         cleaned = self.sanitize_text(text)
 
-        # If loopback
+        # Handle 'rej0' control messages immediately
+        if cleaned == "rej0":
+            logger.debug("Ignoring 'rej0' control message.")
+            return
+
+        logger.info(f"Sanitized text: '{cleaned}'")
+        
+        clean_source = source.replace("*", "")
+        upper_addressee = addressee.strip().upper()
+        
+        # Check if the message is a loopback
+        # If it's a loopback to an alias, we allow it to be processed further,
+        # otherwise, we reject it as a loopback and log it.
         if is_loopback(source, text):
-            if addressee.upper() in self.aliases:
-                # Allow message to alias
-                logger.debug(f"Allowing looped-back message to alias {addressee}")
+            if upper_addressee in self.aliases:
+                logger.debug(f"Allowing looped-back message to alias {upper_addressee}")
             else:
                 logger.warning(f"Ignoring loopback message from {source} to {addressee}: {text}")
                 self._log_audit(
@@ -264,21 +265,11 @@ class BotAprsHandler(aprs.Handler):
                     message=text,
                     msgid=msgid,
                     rejected=True,
-                    note="Loopback detected"
+                    note="Loopback detected and rejected"
                 )
                 return
-
-
-        if cleaned == "rej0":
-            logger.debug("Ignoring 'rej0' control message.")
-            return
-        else:
-            logger.info(f"Sanitized text: '{cleaned}'")
-    
-        clean_source = source.replace("*", "")
-        upper_addressee = addressee.strip().upper()
-    
-        # Check addressee alias
+        
+        # Check if the addressee is an alias of this bot
         logger.info(f"Checking if addressee '{upper_addressee}' is in aliases: {self.aliases}")
         if upper_addressee not in self.aliases:
             logger.warning(f"Ignoring message to {upper_addressee} — not in aliases.")
@@ -292,8 +283,8 @@ class BotAprsHandler(aprs.Handler):
                 note="Addressee not in aliases"
             )
             return
-    
-        # Direct blacklist check
+        
+        # Check if the direct source callsign is blacklisted
         if self.is_blacklisted(clean_source):
             logger.info(f"Ignoring message from blacklisted callsign: {clean_source}")
             self._log_audit(
@@ -306,8 +297,9 @@ class BotAprsHandler(aprs.Handler):
                 note="Blacklisted direct source"
             )
             return
-    
-        # Encapsulated source blacklist check
+        
+        # Check for encapsulated source and its blacklist status
+        force_tcpip_reply = False # Retained for compatibility if used elsewhere
         if "}" in text:
             try:
                 payload = text.split("}", 1)[1]
@@ -317,7 +309,6 @@ class BotAprsHandler(aprs.Handler):
                 else:
                     raise ValueError("Encapsulated frame missing delimiter")
 
-    
                 if self.is_blacklisted(inner_src):
                     logger.info(f"Ignoring encapsulated message from blacklisted callsign: {inner_src}")
                     self._log_audit(
@@ -330,26 +321,24 @@ class BotAprsHandler(aprs.Handler):
                         note="Blacklisted encapsulated source"
                     )
                     return
-    
+        
                 if "TCPIP" in inner_path:
                     force_tcpip_reply = True
-    
+        
             except Exception as e:
                 logger.warning("Could not parse encapsulated frame: %s", e)
-    
-        # Ignore pure control messages (ack/rej)
-        if re.match(r"^(ack|rej)\d+$", cleaned.strip()):
-            logger.info(f"Ignoring control message '{cleaned}' from {clean_source}")
-            return
-    
-        # Process user query
-        self.handle_aprs_query(clean_source, cleaned, origframe=origframe)
-    
-        # Send ack if message ID is present
+        
+        # Process user query and get a flag indicating if a command was handled
+        was_command_handled = self.handle_aprs_query(clean_source, cleaned, origframe=origframe) 
+        
+        # Send ACK if a message ID is present
         if msgid:
             logger.info(f"Sending ack to message {msgid} from {clean_source}")
-            self.send_aprs_msg(clean_source, f"ack{msgid}")
+            # Explicitly mark as ACK to prevent audit logging
+            self.send_aprs_msg(clean_source, f"ack{msgid}", is_ack=True)
 
+        # Log the received message to the audit log after all processing
+        # This occurs only if the message was not rejected by earlier checks.
         self._log_audit(
             direction="recv",
             source=clean_source,
@@ -357,7 +346,7 @@ class BotAprsHandler(aprs.Handler):
             message=cleaned,
             msgid=msgid,
             rejected=False,
-            note="Accepted for processing"
+            note=f"Received and processed. Command handled: {was_command_handled}"
         )
 
 
@@ -366,12 +355,12 @@ class BotAprsHandler(aprs.Handler):
         logger.info("Handling query from %s: %s", source, text)
         
         replies = {
-            "help": "Commands: ping, version, time, help, blacklist_add <CALL>, blacklist_del <CALL>"
+            "help": "Commands: ping, version, time, help, blacklist_add <CALL>, blacklist_del <CALL>, admin_add <CALL>, admin_del <CALL>"
         }
 
         clean_source = source.replace("*", "")
-        text = text.strip()
-        text = self.sanitize_text(text)
+        # Ensure stripping happens after sanitization
+        text = self.sanitize_text(text).strip() 
         qry_args = text.split(" ", 1)
         qry = qry_args[0]
         args = qry_args[1] if len(qry_args) == 2 else ""
@@ -379,30 +368,39 @@ class BotAprsHandler(aprs.Handler):
         qry_lower = qry.lower()
         corrected_qry = self.detect_and_correct_command(qry_lower)
 
+        # Flag to indicate if a command was successfully handled
+        command_executed = False 
+
         if corrected_qry != qry_lower:
             logger.info(f"Corrected command from '{qry}' to '{corrected_qry}' for {clean_source}")
             self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
-            qry_lower = corrected_qry
+            qry_lower = corrected_qry # Use the corrected query for further processing
 
-        elif qry_lower not in self.KNOWN_COMMANDS:
+        # If the command isn't in our known commands after correction attempt
+        # Use .keys() for checking existence in the dictionary
+        if qry_lower not in self.KNOWN_COMMANDS.keys(): 
             self.send_aprs_msg(clean_source, f"Unknown command '{qry}'. Send 'help' for valid commands.")
-            return
+            return False # Command not recognized or executed
 
-        normalized = f"{corrected_qry} {args}".strip().upper()
+        # Combine corrected query and args for normalized comparison
+        normalized_command_args = f"{corrected_qry} {args}".strip().upper()
 
-
-        if normalized.startswith(f"CQ {self.netname}"):
-            match = re.match(rf"^CQ\s+{self.netname}\s+(.+)", text, re.IGNORECASE)
+        # Net related commands
+        if normalized_command_args.startswith(f"CQ {self.netname.upper()}"): # Ensure netname is upper for comparison
+            # Use re.escape() for self.netname to handle special characters if any
+            match = re.match(rf"^CQ\s+{re.escape(self.netname)}\s+(.+)", text, re.IGNORECASE)
             if match:
                 self._broadcast_to_net(clean_source, match.group(1).strip())
-            return
+                command_executed = True
+            return command_executed # Return here as CQ is handled
 
-        if normalized.startswith(f"NETMSG {self.netname}"):
-            match = re.match(rf"^NETMSG\s+{self.netname}\s+(.+)", text, re.IGNORECASE)
+        if normalized_command_args.startswith(f"NETMSG {self.netname.upper()}"): # Ensure netname is upper for comparison
+            match = re.match(rf"^NETMSG\s+{re.escape(self.netname)}\s+(.+)", text, re.IGNORECASE)
             if match:
                 cur = self.db.cursor()
                 cur.execute("SELECT 1 FROM erli_users WHERE callsign = ?", (clean_source,))
                 if not cur.fetchone():
+                    # Log the failed attempt to the audit log
                     self._log_audit(
                         direction="recv",
                         source=clean_source,
@@ -413,68 +411,87 @@ class BotAprsHandler(aprs.Handler):
                         note="NETMSG attempt by unregistered user"
                     )
                     self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
-                    return
+                    return False # Command not executed successfully
 
                 self._broadcast_message(clean_source, match.group(1).strip())
-            return
+                command_executed = True
+            return command_executed # Return here as NETMSG is handled
 
-
-        if normalized == f"NETCHECKOUT {self.netname}":
+        if normalized_command_args == f"NETCHECKOUT {self.netname.upper()}":
             self._remove_user(clean_source)
-            return
+            command_executed = True
+            return command_executed # Return here as NETCHECKOUT is handled
 
-        if normalized == f"NETUSERS {self.netname}":
+        if normalized_command_args == f"NETUSERS {self.netname.upper()}":
             self._send_user_list(clean_source)
-            return
+            command_executed = True
+            return command_executed # Return here as NETUSERS is handled
 
-        # Blacklist management - Admin only
-        if qry_lower == "blacklist_add" and args:
-            self.exec_db("INSERT OR IGNORE INTO blacklist (callsign) VALUES (?)", (args.upper(),))
-            self.send_aprs_msg(clean_source, f"{args.upper()} has been blacklisted.")
-            return
+        # Admin commands - require admin privileges
+        if qry_lower in ["blacklist_add", "blacklist_del", "admin_add", "admin_del"] and args:
+            if not self.is_admin(clean_source):
+                self.send_aprs_msg(clean_source, "Admin privileges required for this command.")
+                # Log unauthorized access attempt
+                self._log_audit(
+                    direction="recv",
+                    source=clean_source,
+                    destination=self.callsign,
+                    message=text,
+                    msgid=None,
+                    rejected=True,
+                    note=f"Unauthorized attempt to '{qry_lower}' by non-admin"
+                )
+                return False # Command not executed due to lack of privileges
 
-        if qry_lower == "blacklist_del" and args:
-            self.exec_db("DELETE FROM blacklist WHERE callsign = ?", (args.upper(),))
-            self.send_aprs_msg(clean_source, f"{args.upper()} removed from blacklist.")
-            return
+            if qry_lower == "blacklist_add":
+                self.exec_db("INSERT OR IGNORE INTO blacklist (callsign) VALUES (?)", (args.upper(),))
+                self.send_aprs_msg(clean_source, f"{args.upper()} has been blacklisted.")
+            elif qry_lower == "blacklist_del":
+                self.exec_db("DELETE FROM blacklist WHERE callsign = ?", (args.upper(),))
+                self.send_aprs_msg(clean_source, f"{args.upper()} removed from blacklist.")
+            elif qry_lower == "admin_add":
+                self.exec_db("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
+                self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
+            elif qry_lower == "admin_del":
+                self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
+                self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
+            
+            command_executed = True
+            return command_executed # Return after handling admin commands
 
-        if qry_lower == "admin_add" and args:
-            self.exec_db("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
-            self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
-            return
 
-        if qry_lower == "admin_del" and args:
-            self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
-            self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
-            return
-    
-
-        # Standard commands
-        if qry == "ping":
+        # Standard general commands
+        if qry_lower == "ping":
             logger.info(f"Detected ping command from {clean_source}, args: '{args}' - sending pong reply")
             self.send_aprs_msg(clean_source, "Pong! " + args)
-            logger.info(f"Pong sent to {clean_source}")
-        elif qry in ["?aprst", "?ping?"]:
+            command_executed = True
+        elif qry_lower in ["?aprst", "?ping?"]:
             try:
                 frame_str = origframe.to_aprs_string().decode("utf-8", errors="replace")
                 self.send_aprs_msg(clean_source, frame_str.split("::", 2)[0] + ":")
+                command_executed = True
             except Exception as e:
                 logging.error("Error responding to ?aprst: %s", e)
-        elif qry == "version":
-            
+        elif qry_lower == "version":
             self.send_aprs_msg(clean_source, "Python " + sys.version.replace("\n", " "))
-        elif qry == "time":
-           
+            command_executed = True
+        elif qry_lower == "time":
             self.send_aprs_msg(clean_source, "Localtime is " + time.strftime("%Y-%m-%d %H:%M:%S UTC%Z"))
-        elif qry == "help":
- 
-            self.send_aprs_msg(clean_source, replies[qry])
+            command_executed = True
+        elif qry_lower == "help":
+            self.send_aprs_msg(clean_source, replies[qry_lower])
+            command_executed = True
         else:
-            
+            # Fallback for unrecognized commands or general messages
             if is_br_callsign(clean_source):
                 self.send_aprs_msg(clean_source, "Sou um bot. Envie 'help' para a lista de comandos")
             else:
                 self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list")
+            command_executed = True # Even if it's a generic info message, it's a handled interaction.
+
+        return command_executed # Return the flag indicating if a command was executed
+
+    # --- End of handle_aprs_query ---
 
     def _broadcast_to_net(self, source, payload):
         cur = self.db.cursor()
@@ -487,35 +504,41 @@ class BotAprsHandler(aprs.Handler):
         cur.execute("SELECT callsign FROM erli_users")
         for callsign, in cur.fetchall():
             msg = f"<{source}> {payload}"
-            self.send_aprs_msg(callsign, msg)
+            # Ensure _broadcast_to_net uses send_aprs_msg, which now has the is_ack parameter
+            # This is a regular message, not an ACK.
+            self.send_aprs_msg(callsign, msg, is_ack=False)
 
     def send_aprs_status(self, status):
+        # Assuming _client is the APRS client that handles enqueue_frame
         self._client.enqueue_frame(self.make_aprs_status(status))
-        self.send_aprs_msg("APRS", ">ERLI is active here at KC2NJV-4.")
+        # This call seems to send a separate message from the status update itself
+        # Consider if this should also be subject to audit logging or if it's a special system message
+        self.send_aprs_msg("APRS", ">ERLI is active here at KC2NJV-4.", is_ack=False)
 
 
     def _broadcast_message(self, source, message):
         cur = self.db.cursor()
         cur.execute("SELECT callsign FROM erli_users")
         for callsign, in cur.fetchall():
-            self.send_aprs_msg(callsign, message)
+            # Broadcasted messages are regular messages, not ACKs
+            self.send_aprs_msg(callsign, message, is_ack=False)
             logging.info(f"Broadcast from {source} to {callsign}: {message}")
 
     def _remove_user(self, source):
         self.db.cursor().execute("DELETE FROM erli_users WHERE callsign = ?", (source,))
         self.db.commit()
         logging.info(f"Removed {source} from {self.netname}")
-        self.send_aprs_msg(source, "NETCheckOUT Successful")
+        self.send_aprs_msg(source, "NETCheckOUT Successful", is_ack=False)
 
     def _send_user_list(self, source):
         cur = self.db.cursor()
         cur.execute("SELECT callsign FROM erli_users ORDER BY timestamp DESC LIMIT 10")
         rows = cur.fetchall()
         reply = "Last 10 users:\n" + ", ".join(row[0] for row in rows) if rows else f"No {self.netname} users heard yet."
-        self.send_aprs_msg(source, reply)
+        self.send_aprs_msg(source, reply, is_ack=False)
         logging.info(f"Sent user list to {source}")
 
-    def send_aprs_msg(self, to_call, text):
+    def send_aprs_msg(self, to_call, text, is_ack=False): # Added is_ack parameter with default False
         if not self._client.is_connected():
             logger.warning(f"Client not connected - cannot send message to {to_call}")
             return
@@ -525,14 +548,18 @@ class BotAprsHandler(aprs.Handler):
         logger.info("Built APRS frame: %s", frame.to_aprs_string())
         self._client.enqueue_frame(frame)
         logger.info("Frame enqueued to APRS-IS: %s", frame.to_aprs_string())
+        # Assuming cache_sent_message is defined elsewhere
         cache_sent_message(to_call, text)
-        self._log_audit(
-            direction="sent",
-            source=self.callsign,
-            destination=to_call,
-            message=text,
-            msgid=None
-        )
+        
+        # Only log to audit if it's not an ACK message to prevent audit log clutter
+        if not is_ack:
+            self._log_audit(
+                direction="sent",
+                source=self.callsign, # The bot's callsign is the source of sent messages
+                destination=to_call,
+                message=text,
+                msgid=None # msgid is typically for received messages, not generated sent messages
+            )
 
         
 class SystemStatusCommand(remotecmd.BaseRemoteCommand):
