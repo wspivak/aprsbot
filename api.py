@@ -2,17 +2,17 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 import sqlite3
 import re
-import sys # Import sys for direct stderr print
+import sys
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS
+CORS(app)
 
 DATABASE = 'erli.db'
 
 def trim_aprs_message(message):
     pattern = r'^(NETMSG)\s+\S+\s+(.*)'
-    match = re.match(pattern, message.strip(), re.IGNORECASE)
-    return match.group(2) if match else message
+    match = re.match(pattern.strip(), message.strip(), re.IGNORECASE)
+    return match.group(2).strip() if match else message.strip()
 
 def query_audit_log():
     conn = sqlite3.connect(DATABASE)
@@ -20,12 +20,12 @@ def query_audit_log():
     print("DEBUG: Inside query_audit_log function", file=sys.stderr)
     cursor.execute("""
         SELECT
-            al.timestamp,
-            al.direction,
-            al.source,
-            al.destination,
-            al.message,
-            al.msgid,
+            MAX(al.timestamp) AS timestamp,
+            TRIM(LOWER(al.direction)) AS direction,
+            TRIM(LOWER(al.source)) AS source,
+            TRIM(LOWER(al.destination)) AS destination,
+            TRIM(al.message) AS message,
+            REPLACE(TRIM(al.msgid), X'0D', '') AS msgid, -- <--- KEY CHANGE: REPLACE \r and then TRIM again
             al.rejected
         FROM
             audit_log AS al
@@ -39,8 +39,15 @@ def query_audit_log():
             AND al.destination NOT LIKE 'BLN%'
             AND eu.callsign IS NOT NULL
             AND bl.callsign IS NULL
+        GROUP BY
+            TRIM(LOWER(al.direction)),
+            TRIM(LOWER(al.source)),
+            TRIM(LOWER(al.destination)),
+            TRIM(al.message),
+            REPLACE(TRIM(al.msgid), X'0D', ''), -- <--- KEY CHANGE: REPLACE \r and then TRIM again in GROUP BY
+            al.rejected
         ORDER BY
-            al.timestamp DESC; -- The semicolon at the very end is fine for a single statement
+            timestamp DESC;
     """)
 
     rows = cursor.fetchall()
@@ -53,19 +60,21 @@ def query_audit_log():
         row_dict['message'] = trim_aprs_message(row_dict['message'])
         trimmed_logs.append(row_dict)
 
+    print(f"DEBUG: Data about to be JSONified: {trimmed_logs}", file=sys.stderr) # Keep this for debugging
+
     return trimmed_logs
 
 @app.route('/logs')
 def get_logs():
-    print("DEBUG: /logs endpoint hit", file=sys.stderr) # Add this
+    print("DEBUG: /logs endpoint hit", file=sys.stderr)
     try:
         logs = query_audit_log()
         return jsonify(logs)
     except Exception as e:
         import traceback
         error_msg = f"Error fetching logs: {e}\n{traceback.format_exc()}"
-        print(f"DEBUG: Caught exception in /logs: {error_msg}", file=sys.stderr) # And this
-        app.logger.error(error_msg) # Keep this too
+        print(f"DEBUG: Caught exception in /logs: {error_msg}", file=sys.stderr)
+        app.logger.error(error_msg)
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
