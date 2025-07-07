@@ -30,6 +30,8 @@ Public logging via the DB, based on the full audit trail.  Logging handled by gu
 
 Added code to prevent loopback from sent messages
 
+Anyone sending HELP to an alias for the list will recieve a response, unless they are blacklisted.
+
 Configurable in aprsbot.conf:
 Added configurable Welcome message for new subscribers
 Callsign, Callsign Alias, List Names, DB name.
