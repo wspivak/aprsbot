@@ -20,6 +20,8 @@ you will be, effectively, operating remote transmitters through the Internet.
 
 <b>Installation:</b> Copy to a directory du jour (suggest /opt/aprsbot), configure and enjoy.
 
+<b>Changes:</b>
+
 SQLite3 database for users, blacklisted callsigns and admins
 
 Blacklist limited to Admins
