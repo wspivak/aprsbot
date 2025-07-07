@@ -156,8 +156,8 @@ class BotAprsHandler(aprs.Handler):
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS admins (
-            callsign TEXT PRIMARY KEY,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                callsign TEXT PRIMARY KEY,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
         cur.execute("""
@@ -192,8 +192,8 @@ class BotAprsHandler(aprs.Handler):
         try:
             cur = self.db.cursor()
             cur.execute("""
-              INSERT INTO audit_log (direction, source, destination, message, msgid, rejected, note)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO audit_log (direction, source, destination, message, msgid, rejected, note)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (direction, source, destination, message, msgid, int(rejected), note))
             self.db.commit()
             logger.debug(f"Audit logged: {direction} {source} -> {destination}: {message}")
@@ -232,7 +232,7 @@ class BotAprsHandler(aprs.Handler):
 
     def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
         logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
-                                    source, addressee, text, msgid, via)
+                      source, addressee, text, msgid, via)
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
 
         cleaned = self.sanitize_text(text)
@@ -315,7 +315,7 @@ class BotAprsHandler(aprs.Handler):
                         note="Blacklisted encapsulated source"
                     )
                     return
-        
+                
             except Exception as e:
                 logger.warning("Could not parse encapsulated frame: %s", e)
         
@@ -353,6 +353,7 @@ class BotAprsHandler(aprs.Handler):
 
         command_executed = False 
 
+        actual_command_to_process = None
         # If a correction was made, inform the user
         # Check against KNOWN_COMMANDS.values() because corrected_qry is a canonical name
         if corrected_qry != qry_lower and corrected_qry in self.KNOWN_COMMANDS.values():
@@ -362,12 +363,44 @@ class BotAprsHandler(aprs.Handler):
         elif qry_lower in self.KNOWN_COMMANDS: # No correction, but it's a known command key
             actual_command_to_process = self.KNOWN_COMMANDS[qry_lower]
         else: # Not a known command even after correction attempt
-            self.send_aprs_msg(clean_source, f"Unknown command '{qry}'. Send 'help' for valid commands.")
+            # This is where a general "I'm a bot, send 'help'" would go if the command is completely unknown.
+            if is_br_callsign(clean_source):
+                self.send_aprs_msg(clean_source, "Sou um bot. Envie 'help' para a lista de comandos")
+            else:
+                self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list")
             return False # Command not recognized or executed
 
         # --- Command Handling Logic (uses actual_command_to_process, which is the canonical name) ---
 
-        # Net related commands
+        # 1. Standard general commands - these should always be available and processed first.
+        if actual_command_to_process == "ping":
+            logger.info(f"Detected ping command from {clean_source}, args: '{args}' - sending pong reply")
+            self.send_aprs_msg(clean_source, "Pong! " + args)
+            command_executed = True
+        elif actual_command_to_process in ["?aprst", "?ping?"]:
+            try:
+                frame_str = origframe.to_aprs_string().decode("utf-8", errors="replace")
+                self.send_aprs_msg(clean_source, frame_str.split("::", 2)[0] + ":")
+                command_executed = True
+            except Exception as e:
+                logging.error("Error responding to ?aprst: %s", e)
+        elif actual_command_to_process == "version":
+            self.send_aprs_msg(clean_source, "Python " + sys.version.replace("\n", " "))
+            command_executed = True
+        elif actual_command_to_process == "time":
+            self.send_aprs_msg(clean_source, "Localtime is " + time.strftime("%Y-%m-%d %H:%M:%S UTC%Z"))
+            command_executed = True
+        elif actual_command_to_process == "help":
+            display_commands = sorted(list(set(self.KNOWN_COMMANDS.keys())))
+            help_msg = "Commands: " + ", ".join(display_commands)
+            self.send_aprs_msg(clean_source, help_msg)
+            command_executed = True
+        
+        # If any of the above public commands were executed, we're done.
+        if command_executed:
+            return True
+
+        # 2. Net related commands (require registration checks)
         if actual_command_to_process == "cq" and args.upper().startswith(self.netname.upper()):
             match_text = f"{actual_command_to_process} {args}"
             match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
@@ -409,7 +442,7 @@ class BotAprsHandler(aprs.Handler):
             command_executed = True
             return command_executed
 
-        # Admin commands - require admin privileges
+        # 3. Admin commands (require admin privileges)
         if actual_command_to_process in ["blacklist_add", "blacklist_del", "admin_add", "admin_del"] and args:
             if not self.is_admin(clean_source):
                 self.send_aprs_msg(clean_source, "Admin privileges required for this command.")
@@ -440,40 +473,7 @@ class BotAprsHandler(aprs.Handler):
             command_executed = True
             return command_executed
 
-        # Standard general commands
-        if actual_command_to_process == "ping":
-            logger.info(f"Detected ping command from {clean_source}, args: '{args}' - sending pong reply")
-            self.send_aprs_msg(clean_source, "Pong! " + args)
-            command_executed = True
-        elif actual_command_to_process in ["?aprst", "?ping?"]:
-            try:
-                frame_str = origframe.to_aprs_string().decode("utf-8", errors="replace")
-                self.send_aprs_msg(clean_source, frame_str.split("::", 2)[0] + ":")
-                command_executed = True
-            except Exception as e:
-                logging.error("Error responding to ?aprst: %s", e)
-        elif actual_command_to_process == "version":
-            self.send_aprs_msg(clean_source, "Python " + sys.version.replace("\n", " "))
-            command_executed = True
-        elif actual_command_to_process == "time":
-            self.send_aprs_msg(clean_source, "Localtime is " + time.strftime("%Y-%m-%d %H:%M:%S UTC%Z"))
-            command_executed = True
-        elif actual_command_to_process == "help":
-            # List commands from KNOWN_COMMANDS keys (user-facing names)
-            # You might want to filter or format this better for display
-            display_commands = sorted(list(set(self.KNOWN_COMMANDS.keys()))) # Use set to get unique lowercase keys
-            help_msg = "Commands: " + ", ".join(display_commands)
-            self.send_aprs_msg(clean_source, help_msg)
-            command_executed = True
-        else:
-            # Fallback for unrecognized commands or general messages
-            if is_br_callsign(clean_source):
-                self.send_aprs_msg(clean_source, "Sou um bot. Envie 'help' para a lista de comandos")
-            else:
-                self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list")
-            command_executed = True
-
-        return command_executed
+        return command_executed # This will be False if no command matched, and indicates to audit log
  
  # --- THE beacon_as_erli METHOD IS HERE ---
     def beacon_as_erli(self, text="ERLI tactical alias active"):
