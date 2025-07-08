@@ -22,7 +22,9 @@ you will be, effectively, operating remote transmitters through the Internet.
 
 <b>Changes:</b>
 
-SQLite3 database for users, blacklisted callsigns and admins
+Logger provides timestamps
+
+SQLite3 database for users, blacklisted callsigns and admins (with timestamps)
 
 Blacklist limited to Admins
 
