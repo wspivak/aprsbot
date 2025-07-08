@@ -27,7 +27,15 @@ import sqlite3
 import difflib
 
 
-logging.basicConfig()
+# Configure the logging
+logging.basicConfig(
+    level=logging.INFO,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+    format='%(asctime)s - %(levelname)s - %(message)s', # This format string includes the timestamp
+    handlers=[
+        logging.FileHandler("/opt/aprsbot/logs/replybot"), # Log to the specified file
+        logging.StreamHandler(sys.stdout) # Also log to console (optional, but good for debugging)
+    ]
+)
 logger = logging.getLogger(__name__)
 
 from cronex import CronExpression
