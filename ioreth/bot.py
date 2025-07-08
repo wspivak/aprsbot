@@ -143,7 +143,7 @@ class BotAprsHandler(aprs.Handler):
     def _init_db(self):
         cur = self.db.cursor()
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS erli_users (
+            CREATE TABLE IF NOT EXISTS users (
                 callsign TEXT PRIMARY KEY,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -414,7 +414,7 @@ class BotAprsHandler(aprs.Handler):
             match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
             if match:
                 cur = self.db.cursor()
-                cur.execute("SELECT 1 FROM erli_users WHERE callsign = ?", (clean_source,))
+                cur.execute("SELECT 1 FROM users WHERE callsign = ?", (clean_source,))
                 if not cur.fetchone():
                     self._log_audit(
                         direction="recv",
@@ -488,13 +488,13 @@ class BotAprsHandler(aprs.Handler):
     
     def _broadcast_to_net(self, source, payload):
         cur = self.db.cursor()
-        cur.execute("SELECT 1 FROM erli_users WHERE callsign = ?", (source,))
+        cur.execute("SELECT 1 FROM users WHERE callsign = ?", (source,))
         if not cur.fetchone():
-            cur.execute("INSERT INTO erli_users (callsign) VALUES (?)", (source,))
+            cur.execute("INSERT INTO users (callsign) VALUES (?)", (source,))
             logging.info(f"Added {source} to {self.netname} heard list")
         self.db.commit()
 
-        cur.execute("SELECT callsign FROM erli_users")
+        cur.execute("SELECT callsign FROM users")
         for callsign, in cur.fetchall():
             msg = f"<{source}> {payload}"
             self.send_aprs_msg(callsign, msg, is_ack=False)
@@ -505,13 +505,13 @@ class BotAprsHandler(aprs.Handler):
 
     def _broadcast_message(self, source, message):
         cur = self.db.cursor()
-        cur.execute("SELECT callsign FROM erli_users")
+        cur.execute("SELECT callsign FROM users")
         for callsign, in cur.fetchall():
             self.send_aprs_msg(callsign, message, is_ack=False)
             logging.info(f"Broadcast from {source} to {callsign}: {message}")
 
     def _remove_user(self, source):
-        self.db.cursor().execute("DELETE FROM erli_users WHERE callsign = ?", (source,))
+        self.db.cursor().execute("DELETE FROM users WHERE callsign = ?", (source,))
         self.db.commit()
         logging.info(f"Removed {source} from {self.netname}")
 #        self.send_aprs_msg(source, "NETCheckOUT Successful", is_ack=False)
@@ -521,7 +521,7 @@ class BotAprsHandler(aprs.Handler):
         
     def _send_user_list(self, source):
         cur = self.db.cursor()
-        cur.execute("SELECT callsign FROM erli_users ORDER BY timestamp DESC LIMIT 10")
+        cur.execute("SELECT callsign FROM users ORDER BY timestamp DESC LIMIT 10")
         rows = cur.fetchall()
         reply = "Last 10 users:\n" + ", ".join(row[0] for row in rows) if rows else f"No {self.netname} users heard yet."
         self.send_aprs_msg(source, reply, is_ack=False)
