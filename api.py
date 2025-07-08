@@ -30,7 +30,7 @@ def query_audit_log():
         FROM
             audit_log AS al
         LEFT JOIN
-            erli_users AS eu ON al.source = eu.callsign
+            users AS eu ON al.source = eu.callsign
         LEFT JOIN
             blacklist AS bl ON al.source = bl.callsign
         WHERE
