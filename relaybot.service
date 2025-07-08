@@ -12,8 +12,8 @@ WorkingDirectory=/<path to>
 **Environment="VIRTUAL_ENV=/<path to>/myenv"**
 **Environment="PATH=/<path to>/myenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"**
 Environment="PYTHONPATH=/opt/aprsbot"
-StandardOutput=append:/var/log/replybot.err
-StandardError=append:/var/log/replybot.log
+StandardOutput=append:/opt/aprsbot/logs/replybot.err
+StandardError=append:/opt/aprsbot/logs/replybot.log
 Restart=always
 User=<user>
 
