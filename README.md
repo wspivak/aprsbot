@@ -55,11 +55,11 @@ CQ [space] [listname] [message] <-- listname is configured in APRSBOT and can be
 
 [<b>NOTE:</b> There is no automatic unsubscribe (concept is that this was made for Emergency Communications)
 
-NetMSG [space] [listname] [message] <-- to distribute message to list
+NetMSG [space] [message] <-- to distribute message to list
 
-NETUSERS [space] [listname] <-- list of users
+NETUSERS  <-- list of users
 
-NETCHECKOUT [space] [listname] <-- to leave the list.
+NETCHECKOUT  <-- to leave the list.
 
 # Special Thanks to:
 
