@@ -1,21 +1,3 @@
-#
-# Ioreth - An APRS library and bot
-# Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-
 import sys
 import time
 import logging
@@ -25,7 +7,6 @@ import re
 import random
 import sqlite3
 import difflib
-
 
 # Configure the logging
 logging.basicConfig(
@@ -73,6 +54,7 @@ def is_br_callsign(callsign):
     return bool(re.match("P[PTUY][0-9].+", callsign.upper()))
 
 class BotAprsHandler(aprs.Handler):
+    # CORRECTED __init__ METHOD - Combine both previous ones
     def __init__(self, callsign, client, config_file="aprsbot.conf"):
         """
         callsign – your APRS callsign
@@ -94,7 +76,7 @@ class BotAprsHandler(aprs.Handler):
         # START CHANGE: Add a placeholder for the configurable response
         self.netcheckout_response = "NETCheckOUT Successful" # Default value
         # END CHANGE
-        
+
         # load netname, aliases, dbfile, and commands
         self._load_config()
 
@@ -126,18 +108,18 @@ class BotAprsHandler(aprs.Handler):
             for cmd_key, canonical_name in cfg.items("commands"):
                 # Store lowercased command_key for lookup, canonical name as value
                 self.KNOWN_COMMANDS[cmd_key.lower()] = canonical_name.strip()
-        
+
         # Ensure 'help' is always available, even if not in config
         if 'help' not in self.KNOWN_COMMANDS:
              self.KNOWN_COMMANDS['help'] = 'help'
-             
+
         self.beacon_message_template = cfg.get("aprs", "beacon_message", fallback="APRS Bot active").strip()
         self.user_defined_beacon_alias = cfg.get("aprs", "beacon_alias", fallback="NoAlias").strip()
 
         # START CHANGE: Load configurable responses
         self.netcheckout_response = cfg.get("responses", "netcheckout_success", fallback="NETCheckOUT Successful").strip()
         # END CHANGE
-        
+
         # ensure directory exists & is writable
         db_dir = os.path.dirname(self._dbfile) or "."
         if not os.path.isdir(db_dir):
@@ -148,8 +130,17 @@ class BotAprsHandler(aprs.Handler):
         logger.info(f"Using database file: {self._dbfile}")
         logger.info(f"Loaded commands from config: {list(self.KNOWN_COMMANDS.keys())}")
 
+    # CORRECTED _init_db METHOD - Includes PRAGMAs and Indexes
     def _init_db(self):
         cur = self.db.cursor()
+
+        # --- Set PRAGMAs for Performance ---
+        cur.execute("PRAGMA journal_mode = WAL;")
+        cur.execute("PRAGMA synchronous = NORMAL;")
+        cur.execute("PRAGMA temp_store = MEMORY;")
+        cur.execute("PRAGMA mmap_size = 67108864;")
+
+        # --- Create Tables (Your existing code) ---
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 callsign TEXT PRIMARY KEY,
@@ -172,21 +163,43 @@ class BotAprsHandler(aprs.Handler):
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                direction TEXT,          -- 'recv' or 'sent'
-                source TEXT,             -- who sent the message or who it's being sent to
-                destination TEXT,        -- where it was going (only for 'sent')
-                message TEXT,            -- content
-                msgid TEXT,              -- APRS msgid if available
+                direction TEXT,
+                source TEXT,
+                destination TEXT,
+                message TEXT,
+                msgid TEXT,
                 rejected BOOLEAN DEFAULT 0,
                 note TEXT
             )
         """)
-        # Removed 'known_commands' table creation as commands are only from config
+
+        # --- Add Indexes (New Section) ---
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log (timestamp);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_source ON audit_log (source);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_destination ON audit_log (destination);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_message ON audit_log (message);")
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_log_group_by_order_by ON audit_log (
+                direction,
+                source,
+                destination,
+                message,
+                msgid,
+                rejected,
+                timestamp DESC
+            );
+        """)
+
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_callsign ON users (callsign);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_blacklist_callsign ON blacklist (callsign);")
+
+        # --- Final Commit for Tables and Indexes ---
         self.db.commit()
 
-    # Removed _load_commands_from_db method
-    # Removed add_command_to_db method
-    # Removed delete_command_from_db method
+        # --- Analyze Database (Recommended after creating tables/indexes or significant data changes) ---
+        cur.execute("ANALYZE;")
+        self.db.commit()
 
     def exec_db(self, query, args=()):
         try:
@@ -223,19 +236,15 @@ class BotAprsHandler(aprs.Handler):
         return cur.fetchone() is not None
 
     def detect_and_correct_command(self, input_qry):
-        # We use the keys of KNOWN_COMMANDS (the user-facing command names) for matching
         matches = difflib.get_close_matches(input_qry, self.KNOWN_COMMANDS.keys(), n=1, cutoff=0.8)
         if matches:
-            return self.KNOWN_COMMANDS[matches[0]] # Return the canonical name
+            return self.KNOWN_COMMANDS[matches[0]]
         return input_qry
 
     def detect_typo_command(self, qry):
-        """
-        Detects typos and suggests known command using fuzzy match.
-        """
         matches = difflib.get_close_matches(qry, self.KNOWN_COMMANDS.keys(), n=1, cutoff=0.8)
         if matches:
-            return matches[0] # Return the matched key (actual command typed)
+            return matches[0]
         return None
 
     def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
@@ -245,17 +254,15 @@ class BotAprsHandler(aprs.Handler):
 
         cleaned = self.sanitize_text(text)
 
-        # Handle 'rej0' control messages immediately
         if cleaned == "rej0":
             logger.debug("Ignoring 'rej0' control message.")
             return
 
         logger.info(f"Sanitized text: '{cleaned}'")
-        
+
         clean_source = source.replace("*", "")
         upper_addressee = addressee.strip().upper()
-        
-        # Check if the message is a loopback
+
         if is_loopback(source, text):
             if upper_addressee in self.aliases:
                 logger.debug(f"Allowing looped-back message to alias {upper_addressee}")
@@ -271,8 +278,7 @@ class BotAprsHandler(aprs.Handler):
                     note="Loopback detected and rejected"
                 )
                 return
-        
-        # Check if the addressee is an alias of this bot
+
         logger.info(f"Checking if addressee '{upper_addressee}' is in aliases: {self.aliases}")
         if upper_addressee not in self.aliases:
             logger.warning(f"Ignoring message to {upper_addressee} — not in aliases.")
@@ -286,8 +292,7 @@ class BotAprsHandler(aprs.Handler):
                 note="Addressee not in aliases"
             )
             return
-        
-        # Check if the direct source callsign is blacklisted
+
         if self.is_blacklisted(clean_source):
             logger.info(f"Ignoring message from blacklisted callsign: {clean_source}")
             self._log_audit(
@@ -300,8 +305,7 @@ class BotAprsHandler(aprs.Handler):
                 note="Blacklisted direct source"
             )
             return
-        
-        # Check for encapsulated source and its blacklist status
+
         if "}" in text:
             try:
                 payload = text.split("}", 1)[1]
@@ -323,19 +327,16 @@ class BotAprsHandler(aprs.Handler):
                         note="Blacklisted encapsulated source"
                     )
                     return
-                
+
             except Exception as e:
                 logger.warning("Could not parse encapsulated frame: %s", e)
-        
-        # Process user query and get a flag indicating if a command was handled
-        was_command_handled = self.handle_aprs_query(clean_source, cleaned, origframe=origframe) 
-        
-        # Send ACK if a message ID is present
+
+        was_command_handled = self.handle_aprs_query(clean_source, cleaned, origframe=origframe)
+
         if msgid:
             logger.info(f"Sending ack to message {msgid} from {clean_source}")
             self.send_aprs_msg(clean_source, f"ack{msgid}", is_ack=True)
 
-        # Log the received message to the audit log after all processing
         self._log_audit(
             direction="recv",
             source=clean_source,
@@ -349,9 +350,9 @@ class BotAprsHandler(aprs.Handler):
     def handle_aprs_query(self, source, text, origframe):
         logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
         logger.info("Handling query from %s: %s", source, text)
-        
+
         clean_source = source.replace("*", "")
-        text = self.sanitize_text(text).strip() 
+        text = self.sanitize_text(text).strip()
         qry_args = text.split(" ", 1)
         qry = qry_args[0]
         args = qry_args[1] if len(qry_args) == 2 else ""
@@ -359,28 +360,22 @@ class BotAprsHandler(aprs.Handler):
         qry_lower = qry.lower()
         corrected_qry = self.detect_and_correct_command(qry_lower)
 
-        command_executed = False 
+        command_executed = False
 
         actual_command_to_process = None
-        # If a correction was made, inform the user
-        # Check against KNOWN_COMMANDS.values() because corrected_qry is a canonical name
         if corrected_qry != qry_lower and corrected_qry in self.KNOWN_COMMANDS.values():
             logger.info(f"Corrected command from '{qry}' to '{corrected_qry}' for {clean_source}")
             self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
-            actual_command_to_process = corrected_qry 
-        elif qry_lower in self.KNOWN_COMMANDS: # No correction, but it's a known command key
+            actual_command_to_process = corrected_qry
+        elif qry_lower in self.KNOWN_COMMANDS:
             actual_command_to_process = self.KNOWN_COMMANDS[qry_lower]
-        else: # Not a known command even after correction attempt
-            # This is where a general "I'm a bot, send 'help'" would go if the command is completely unknown.
+        else:
             if is_br_callsign(clean_source):
                 self.send_aprs_msg(clean_source, "Sou um bot. Envie 'help' para a lista de comandos")
             else:
                 self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list")
-            return False # Command not recognized or executed
+            return False
 
-        # --- Command Handling Logic (uses actual_command_to_process, which is the canonical name) ---
-
-        # 1. Standard general commands - these should always be available and processed first.
         if actual_command_to_process == "ping":
             logger.info(f"Detected ping command from {clean_source}, args: '{args}' - sending pong reply")
             self.send_aprs_msg(clean_source, "Pong! " + args)
@@ -403,12 +398,10 @@ class BotAprsHandler(aprs.Handler):
             help_msg = "Commands: " + ", ".join(display_commands)
             self.send_aprs_msg(clean_source, help_msg)
             command_executed = True
-        
-        # If any of the above public commands were executed, we're done.
+
         if command_executed:
             return True
 
-        # 2. Net related commands (require registration checks)
         if actual_command_to_process == "cq" and args.upper().startswith(self.netname.upper()):
             match_text = f"{actual_command_to_process} {args}"
             match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
@@ -450,7 +443,6 @@ class BotAprsHandler(aprs.Handler):
             command_executed = True
             return command_executed
 
-        # 3. Admin commands (require admin privileges)
         if actual_command_to_process in ["blacklist_add", "blacklist_del", "admin_add", "admin_del"] and args:
             if not self.is_admin(clean_source):
                 self.send_aprs_msg(clean_source, "Admin privileges required for this command.")
@@ -477,23 +469,21 @@ class BotAprsHandler(aprs.Handler):
             elif actual_command_to_process == "admin_del":
                 self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
                 self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
-            
+
             command_executed = True
             return command_executed
 
-        return command_executed # This will be False if no command matched, and indicates to audit log
- 
- # --- THE beacon_as_erli METHOD IS HERE ---
+        return command_executed
+
     def beacon_as_erli(self, text="ERLI tactical alias active"):
         """Send a status beacon as 'ERLI' so APRS-IS learns the alias."""
         original_callsign = self.callsign
-        self.callsign = "ERLI"  # temporarily pretend we're ERLI
+        self.callsign = "ERLI"
         frame = self.make_aprs_status(text)
         self._client.enqueue_frame(frame)
         logger.info(f"Beaconed as ERLI: {text}")
         self.callsign = original_callsign
-    # --- END beacon_as_erli METHOD ---
-    
+
     def _broadcast_to_net(self, source, payload):
         cur = self.db.cursor()
         cur.execute("SELECT 1 FROM users WHERE callsign = ?", (source,))
@@ -522,11 +512,8 @@ class BotAprsHandler(aprs.Handler):
         self.db.cursor().execute("DELETE FROM users WHERE callsign = ?", (source,))
         self.db.commit()
         logging.info(f"Removed {source} from {self.netname}")
-#        self.send_aprs_msg(source, "NETCheckOUT Successful", is_ack=False)
-        # START CHANGE: Use the configurable response here
         self.send_aprs_msg(source, self.netcheckout_response, is_ack=False)
-        # END CHANGE
-        
+
     def _send_user_list(self, source):
         cur = self.db.cursor()
         cur.execute("SELECT callsign FROM users ORDER BY timestamp DESC LIMIT 10")
@@ -546,7 +533,7 @@ class BotAprsHandler(aprs.Handler):
         self._client.enqueue_frame(frame)
         logger.info("Frame enqueued to APRS-IS: %s", frame.to_aprs_string())
         cache_sent_message(to_call, text)
-        
+
         if not is_ack:
             self._log_audit(
                 direction="sent",
@@ -555,7 +542,7 @@ class BotAprsHandler(aprs.Handler):
                 message=text,
                 msgid=None
             )
-        
+
 class SystemStatusCommand(remotecmd.BaseRemoteCommand):
     def __init__(self, cfg):
         remotecmd.BaseRemoteCommand.__init__(self, "system-status")
@@ -585,29 +572,22 @@ class SystemStatusCommand(remotecmd.BaseRemoteCommand):
 
 class ReplyBot(AprsClient):
     def __init__(self, config_file):
-        # 1) call parent ctor
         super().__init__()
 
-        # 2) record the config path immediately
         self._config_file = config_file
 
-        # 3) prepare config‐watcher state
         self._config_mtime = None
         self._cfg = configparser.ConfigParser()
-        self._cfg.optionxform = str     # keep case sensitivity
+        self._cfg.optionxform = str
 
-        # 4) instantiate the APRS handler with the config path
-        #    (empty callsign for now; real one will be set in _load_config)
         self._aprs = BotAprsHandler("", self, config_file=self._config_file)
 
-        # 5) other state
-        self._last_blns            = time.monotonic()
-        self._last_cron_blns       = 0
-        self._last_status          = time.monotonic()
+        self._last_blns = time.monotonic()
+        self._last_cron_blns = 0
+        self._last_status = time.monotonic()
         self._last_reconnect_attempt = 0
-        self._rem                  = remotecmd.RemoteCommandHandler()
+        self._rem = remotecmd.RemoteCommandHandler()
 
-        # 6) now read the config and wire everything up
         self._check_updated_config()
 
 
@@ -618,11 +598,9 @@ class ReplyBot(AprsClient):
             self.addr = self._cfg["tnc"]["addr"]
             self.port = int(self._cfg["tnc"]["port"])
 
-            # Get values from config
             callsign = self._cfg["aprs"]["callsign"]
             path = self._cfg["aprs"]["path"]
 
-            # Initialize the APRS handler with the proper callsign and path
             self._aprs = BotAprsHandler(callsign, self, config_file=self._config_file)
             self._aprs.path = path
 
@@ -668,23 +646,14 @@ class ReplyBot(AprsClient):
             max_age = 600
 
 
-        now_mono = time.monotonic()  # Make sure this line comes before any logging involving now_mono
+        now_mono = time.monotonic()
         now_time = time.time()
-#        logger.debug(f"now_mono type: {type(now_mono)}")
-#        logger.debug(f"self._last_blns type: {type(self._last_blns)}")
-#        logger.debug(f"max_age type: {type(max_age)}")
-#        logger.info(f"Type of self._last_blns: {type(self._last_blns)}, value: {self._last_blns}")
-#        logger.info(f"Type of max_age: {type(max_age)}, value: {max_age}")
         try:
             self._last_blns = float(self._last_blns)
         except Exception:
             self._last_blns = 0.0
 
 
-
-
-
-        # Optimization: return ASAP if nothing to do.
         if (now_mono <= (self._last_blns + max_age)) and (
             now_time <= (self._last_cron_blns + 60)
         ):
@@ -692,33 +661,26 @@ class ReplyBot(AprsClient):
 
         bln_map = dict()
 
-        # Find all standard (non rule-based) bulletins.
         keys = self._cfg.options("bulletins")
         keys.sort()
         std_blns = [
             k for k in keys if k.startswith("BLN") and len(k) > 3 and "_" not in k
         ]
 
-        # Do not run if time was not set yet (e.g. Raspberry Pis getting their
-        # time from NTP but before conecting to the network)
         time_was_set = time.gmtime().tm_year > 2000
 
-        # Map all matching rule-based bulletins.
         if time_was_set and now_time > (self._last_cron_blns + 60):
-            # Randomize the delay until next check to prevent packet storms
-            # in the first seconds following a minute. It will, of course,
-            # still run within the minute.
             self._last_cron_blns = 60 * int(now_time / 60.0) + random.randint(0, 30)
 
             cur_time = time.localtime()
             try:
-                utc_offset = int(cur_time.tm_gmtoff) / 3600  # UTC offset in hours
+                utc_offset = int(cur_time.tm_gmtoff) / 3600
             except Exception as e:
-                logger.exception("Failed to compute UTC offset")    
-            ref_time = cur_time[:5]  # (Y, M, D, hour, min)
+                logger.exception("Failed to compute UTC offset")
+
+            ref_time = cur_time[:5]
 
             for k in keys:
-                # if key is "BLNx_rule_x", etc.
                 lst = k.split("_", 3)
                 if (
                     len(lst) == 3
@@ -730,7 +692,6 @@ class ReplyBot(AprsClient):
                     if expr.check_trigger(ref_time, utc_offset):
                         bln_map[lst[0]] = expr.comment
 
-        # If we need to send standard bulletins now, copy them to the map.
         if now_mono > (self._last_blns + max_age):
             self._last_blns = now_mono
             for k in std_blns:
@@ -748,12 +709,7 @@ class ReplyBot(AprsClient):
             return
         max_age = self._cfg.getint("status", "send_freq", fallback=600)
         now_mono = time.monotonic()
-        
-#        logger.debug(f"now_mono type: {type(now_mono)}")
-#        logger.debug(f"self._last_status type: {type(self._last_status)}")
-#        logger.debug(f"max_age type: {type(max_age)}")
-#        logger.info(f"Type of self._last_status: {type(self._last_status)}, value: {self._last_status}")
-#        logger.info(f"Type of max_age: {type(max_age)}, value: {max_age}")
+
         try:
             self._last_status = float(self._last_status)
         except Exception:
@@ -766,8 +722,6 @@ class ReplyBot(AprsClient):
         self._rem.post_cmd(SystemStatusCommand(self._cfg["status"]))
 
     def _check_reconnection(self):
-#        logger.debug(f"last reconnect attempt type: {type(self._last_reconnect_attempt)}")
-#        logger.info(f"Type of self._last_reconnect_attempt: {type(self._last_reconnect_attempt)}, value: {self._last_reconnect_attempt}")
         try:
             self._last_reconnect_attempt = float(self._last_reconnect_attempt)
         except Exception:
@@ -777,7 +731,7 @@ class ReplyBot(AprsClient):
             return
 
         try:
-            if time.monotonic() > self._last_reconnect_attempt + 5: 
+            if time.monotonic() > self._last_reconnect_attempt + 5:
                 logger.info("Trying to reconnect")
                 self._last_reconnect_attempt = time.monotonic()
                 self.connect()
@@ -791,26 +745,21 @@ class ReplyBot(AprsClient):
         self._update_bulletins()
         self._update_status()
 
-        # 🌐 Beacon as ERLI every 15 minutes or so 
+
         now = time.monotonic()
         if not hasattr(self, "_last_erli_beacon"):
             self._last_erli_beacon = 0
-        if now - self._last_erli_beacon > 900:  # 15 minutes
+        if now - self._last_erli_beacon > 900:
             self._last_erli_beacon = now
-            
-            # --- CORRECTED INTEGRATION ---
-            # Access beacon_message_template and user_defined_beacon_alias
-            # through the _aprs (BotAprsHandler) instance
-            
+
+
             beacon_text = self._aprs.beacon_message_template.format(
-                alias=self._aprs.user_defined_beacon_alias, # Access through _aprs
-                call=self._aprs.callsign                    # Access through _aprs for consistency
+                alias=self._aprs.user_defined_beacon_alias,
+                call=self._aprs.callsign
             )
-            
+
             self._aprs.beacon_as_erli(beacon_text)
-            # --- END CORRECTED INTEGRATION ---
-           
-        # Poll results from external commands, if any.
+
         while True:
             rcmd = self._rem.poll_ret()
             if not rcmd:
