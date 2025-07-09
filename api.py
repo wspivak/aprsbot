@@ -10,8 +10,12 @@ CORS(app)
 DATABASE = 'erli.db'
 
 def trim_aprs_message(message):
-    pattern = r'^(NETMSG)\s+\S+\s+(.*)'
+    # Updated pattern to remove the netname requirement for NETMSG
+    # Now it captures everything after 'NETMSG ' as the message content
+    pattern = r'^(NETMSG)\s+(.*)'
     match = re.match(pattern.strip(), message.strip(), re.IGNORECASE)
+    # If it's a NETMSG, return the captured group (the message content)
+    # Otherwise, return the original message stripped of leading/trailing whitespace
     return match.group(2).strip() if match else message.strip()
 
 def query_audit_log():
@@ -25,7 +29,7 @@ def query_audit_log():
             TRIM(LOWER(al.source)) AS source,
             TRIM(LOWER(al.destination)) AS destination,
             TRIM(al.message) AS message,
-            REPLACE(TRIM(al.msgid), X'0D', '') AS msgid, -- <--- KEY CHANGE: REPLACE \r and then TRIM again
+            REPLACE(TRIM(al.msgid), X'0D', '') AS msgid,
             al.rejected
         FROM
             audit_log AS al
@@ -35,16 +39,19 @@ def query_audit_log():
             blacklist AS bl ON al.source = bl.callsign
         WHERE
             al.timestamp >= datetime('now', '-7 days')
-            AND (LOWER(al.message) LIKE '%cq%' OR LOWER(al.message) LIKE '%netmsg erli%')
-            AND al.destination NOT LIKE 'BLN%'
-            AND eu.callsign IS NOT NULL
-            AND bl.callsign IS NULL
+            AND al.destination NOT LIKE 'BLN%' -- Exclude bulletins
+            -- Condition for incoming messages (from users)
+            -- Only 'recv' messages for 'cq' or 'netmsg' are included
+            AND al.direction = 'recv'
+            AND (LOWER(al.message) LIKE '%cq%' OR LOWER(al.message) LIKE '%netmsg%')
+            AND eu.callsign IS NOT NULL -- Ensure it's from a registered user (or was attempted by one)
+            AND bl.callsign IS NULL      -- And not from a blacklisted user
         GROUP BY
             TRIM(LOWER(al.direction)),
             TRIM(LOWER(al.source)),
             TRIM(LOWER(al.destination)),
             TRIM(al.message),
-            REPLACE(TRIM(al.msgid), X'0D', ''), -- <--- KEY CHANGE: REPLACE \r and then TRIM again in GROUP BY
+            REPLACE(TRIM(al.msgid), X'0D', ''),
             al.rejected
         ORDER BY
             timestamp DESC;
@@ -57,6 +64,7 @@ def query_audit_log():
     trimmed_logs = []
     for row in rows:
         row_dict = dict(zip(columns, row))
+        # Apply the trimming logic to the message
         row_dict['message'] = trim_aprs_message(row_dict['message'])
         trimmed_logs.append(row_dict)
 
