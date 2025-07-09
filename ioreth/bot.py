@@ -348,75 +348,108 @@ class BotAprsHandler(aprs.Handler):
         )
 
     def handle_aprs_query(self, source, text, origframe):
-        logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
-        logger.info("Handling query from %s: %s", source, text)
-
-        clean_source = source.replace("*", "")
-        text = self.sanitize_text(text).strip()
-        qry_args = text.split(" ", 1)
-        qry = qry_args[0]
-        args = qry_args[1] if len(qry_args) == 2 else ""
-
-        qry_lower = qry.lower()
-        corrected_qry = self.detect_and_correct_command(qry_lower)
-
-        command_executed = False
-
-        actual_command_to_process = None
-        if corrected_qry != qry_lower and corrected_qry in self.KNOWN_COMMANDS.values():
-            logger.info(f"Corrected command from '{qry}' to '{corrected_qry}' for {clean_source}")
-            self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
-            actual_command_to_process = corrected_qry
-        elif qry_lower in self.KNOWN_COMMANDS:
-            actual_command_to_process = self.KNOWN_COMMANDS[qry_lower]
-        else:
-            if is_br_callsign(clean_source):
-                self.send_aprs_msg(clean_source, "Sou um bot. Envie 'help' para a lista de comandos")
+            logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
+            logger.info("Handling query from %s: %s", source, text)
+    
+            clean_source = source.replace("*", "")
+            text = self.sanitize_text(text).strip()
+            qry_args = text.split(" ", 1)
+            qry = qry_args[0]
+            args = qry_args[1] if len(qry_args) == 2 else ""
+    
+            qry_lower = qry.lower()
+            corrected_qry = self.detect_and_correct_command(qry_lower)
+    
+            command_executed = False
+    
+            actual_command_to_process = None
+            if corrected_qry != qry_lower and corrected_qry in self.KNOWN_COMMANDS.values():
+                logger.info(f"Corrected command from '{qry}' to '{corrected_qry}' for {clean_source}")
+                self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
+                actual_command_to_process = corrected_qry
+            elif qry_lower in self.KNOWN_COMMANDS:
+                actual_command_to_process = self.KNOWN_COMMANDS[qry_lower]
             else:
-                self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list")
-            return False
-
-        if actual_command_to_process == "ping":
-            logger.info(f"Detected ping command from {clean_source}, args: '{args}' - sending pong reply")
-            self.send_aprs_msg(clean_source, "Pong! " + args)
-            command_executed = True
-        elif actual_command_to_process in ["?aprst", "?ping?"]:
-            try:
-                frame_str = origframe.to_aprs_string().decode("utf-8", errors="replace")
-                self.send_aprs_msg(clean_source, frame_str.split("::", 2)[0] + ":")
+                if is_br_callsign(clean_source):
+                    self.send_aprs_msg(clean_source, "Sou um bot. Envie 'help' para a lista de comandos")
+                else:
+                    self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list")
+                return False
+    
+            if actual_command_to_process == "ping":
+                logger.info(f"Detected ping command from {clean_source}, args: '{args}' - sending pong reply")
+                self.send_aprs_msg(clean_source, "Pong! " + args)
                 command_executed = True
-            except Exception as e:
-                logging.error("Error responding to ?aprst: %s", e)
-        elif actual_command_to_process == "version":
-            self.send_aprs_msg(clean_source, "Python " + sys.version.replace("\n", " "))
-            command_executed = True
-        elif actual_command_to_process == "time":
-            self.send_aprs_msg(clean_source, "Localtime is " + time.strftime("%Y-%m-%d %H:%M:%S UTC%Z"))
-            command_executed = True
-        elif actual_command_to_process == "help":
-            display_commands = sorted(list(set(self.KNOWN_COMMANDS.keys())))
-            help_msg = "Commands: " + ", ".join(display_commands)
-            self.send_aprs_msg(clean_source, help_msg)
-            command_executed = True
-
-        if command_executed:
-            return True
-
-        if actual_command_to_process == "cq" and args.upper().startswith(self.netname.upper()):
-            match_text = f"{actual_command_to_process} {args}"
-            match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
-            if match:
-                self._broadcast_to_net(clean_source, match.group(1).strip())
+            elif actual_command_to_process in ["?aprst", "?ping?"]:
+                try:
+                    frame_str = origframe.to_aprs_string().decode("utf-8", errors="replace")
+                    self.send_aprs_msg(clean_source, frame_str.split("::", 2)[0] + ":")
+                    command_executed = True
+                except Exception as e:
+                    logging.error("Error responding to ?aprst: %s", e)
+            elif actual_command_to_process == "version":
+                self.send_aprs_msg(clean_source, "Python " + sys.version.replace("\n", " "))
                 command_executed = True
-            return command_executed
-
-        if actual_command_to_process == "netmsg" and args.upper().startswith(self.netname.upper()):
-            match_text = f"{actual_command_to_process} {args}"
-            match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
-            if match:
-                cur = self.db.cursor()
-                cur.execute("SELECT 1 FROM users WHERE callsign = ?", (clean_source,))
-                if not cur.fetchone():
+            elif actual_command_to_process == "time":
+                self.send_aprs_msg(clean_source, "Localtime is " + time.strftime("%Y-%m-%d %H:%M:%S UTC%Z"))
+                command_executed = True
+            elif actual_command_to_process == "help":
+                display_commands = sorted(list(set(self.KNOWN_COMMANDS.keys())))
+                help_msg = "Commands: " + ", ".join(display_commands)
+                self.send_aprs_msg(clean_source, help_msg)
+                command_executed = True
+    
+            if command_executed:
+                return True
+    
+            # CQ still requires netname as per your request
+            if actual_command_to_process == "cq" and args.upper().startswith(self.netname.upper()):
+                match_text = f"{actual_command_to_process} {args}"
+                match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
+                if match:
+                    self._broadcast_to_net(clean_source, match.group(1).strip())
+                    command_executed = True
+                return command_executed
+    
+            # NETMSG still requires netname as per current logic (it checks registration)
+            if actual_command_to_process == "netmsg" and args.upper().startswith(self.netname.upper()):
+                match_text = f"{actual_command_to_process} {args}"
+                match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
+                if match:
+                    cur = self.db.cursor()
+                    cur.execute("SELECT 1 FROM users WHERE callsign = ?", (clean_source,))
+                    if not cur.fetchone():
+                        self._log_audit(
+                            direction="recv",
+                            source=clean_source,
+                            destination=self.callsign,
+                            message=text,
+                            msgid=None,
+                            rejected=True,
+                            note="NETMSG attempt by unregistered user"
+                        )
+                        self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
+                        return False
+    
+                    self._broadcast_message(clean_source, match.group(1).strip())
+                    command_executed = True
+                return command_executed
+    
+            # Modified: Removed 'and args.upper() == self.netname.upper()'
+            if actual_command_to_process == "netcheckout":
+                self._remove_user(clean_source)
+                command_executed = True
+                return command_executed
+    
+            # Modified: Removed 'and args.upper() == self.netname.upper()'
+            if actual_command_to_process == "netusers":
+                self._send_user_list(clean_source)
+                command_executed = True
+                return command_executed
+    
+            if actual_command_to_process in ["blacklist_add", "blacklist_del", "admin_add", "admin_del"] and args:
+                if not self.is_admin(clean_source):
+                    self.send_aprs_msg(clean_source, "Admin privileges required for this command.")
                     self._log_audit(
                         direction="recv",
                         source=clean_source,
@@ -424,56 +457,27 @@ class BotAprsHandler(aprs.Handler):
                         message=text,
                         msgid=None,
                         rejected=True,
-                        note="NETMSG attempt by unregistered user"
+                        note=f"Unauthorized attempt to '{actual_command_to_process}' by non-admin"
                     )
-                    self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
                     return False
-
-                self._broadcast_message(clean_source, match.group(1).strip())
+    
+                if actual_command_to_process == "blacklist_add":
+                    self.exec_db("INSERT OR IGNORE INTO blacklist (callsign) VALUES (?)", (args.upper(),))
+                    self.send_aprs_msg(clean_source, f"{args.upper()} has been blacklisted.")
+                elif actual_command_to_process == "blacklist_del":
+                    self.exec_db("DELETE FROM blacklist WHERE callsign = ?", (args.upper(),))
+                    self.send_aprs_msg(clean_source, f"{args.upper()} removed from blacklist.")
+                elif actual_command_to_process == "admin_add":
+                    self.exec_db("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
+                    self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
+                elif actual_command_to_process == "admin_del":
+                    self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
+                    self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
+    
                 command_executed = True
+                return command_executed
+    
             return command_executed
-
-        if actual_command_to_process == "netcheckout" and args.upper() == self.netname.upper():
-            self._remove_user(clean_source)
-            command_executed = True
-            return command_executed
-
-        if actual_command_to_process == "netusers" and args.upper() == self.netname.upper():
-            self._send_user_list(clean_source)
-            command_executed = True
-            return command_executed
-
-        if actual_command_to_process in ["blacklist_add", "blacklist_del", "admin_add", "admin_del"] and args:
-            if not self.is_admin(clean_source):
-                self.send_aprs_msg(clean_source, "Admin privileges required for this command.")
-                self._log_audit(
-                    direction="recv",
-                    source=clean_source,
-                    destination=self.callsign,
-                    message=text,
-                    msgid=None,
-                    rejected=True,
-                    note=f"Unauthorized attempt to '{actual_command_to_process}' by non-admin"
-                )
-                return False
-
-            if actual_command_to_process == "blacklist_add":
-                self.exec_db("INSERT OR IGNORE INTO blacklist (callsign) VALUES (?)", (args.upper(),))
-                self.send_aprs_msg(clean_source, f"{args.upper()} has been blacklisted.")
-            elif actual_command_to_process == "blacklist_del":
-                self.exec_db("DELETE FROM blacklist WHERE callsign = ?", (args.upper(),))
-                self.send_aprs_msg(clean_source, f"{args.upper()} removed from blacklist.")
-            elif actual_command_to_process == "admin_add":
-                self.exec_db("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
-                self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
-            elif actual_command_to_process == "admin_del":
-                self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
-                self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
-
-            command_executed = True
-            return command_executed
-
-        return command_executed
 
     def beacon_as_erli(self, text="ERLI tactical alias active"):
         """Send a status beacon as 'ERLI' so APRS-IS learns the alias."""
