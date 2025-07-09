@@ -412,27 +412,31 @@ class BotAprsHandler(aprs.Handler):
                 return command_executed
     
             # NETMSG still requires netname as per current logic (it checks registration)
-            if actual_command_to_process == "netmsg" and args.upper().startswith(self.netname.upper()):
-                match_text = f"{actual_command_to_process} {args}"
-                match = re.match(rf"^{re.escape(actual_command_to_process)}\s+{re.escape(self.netname)}\s+(.+)", match_text, re.IGNORECASE)
-                if match:
-                    cur = self.db.cursor()
-                    cur.execute("SELECT 1 FROM users WHERE callsign = ?", (clean_source,))
-                    if not cur.fetchone():
-                        self._log_audit(
-                            direction="recv",
-                            source=clean_source,
-                            destination=self.callsign,
-                            message=text,
-                            msgid=None,
-                            rejected=True,
-                            note="NETMSG attempt by unregistered user"
-                        )
-                        self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
-                        return False
-    
-                    self._broadcast_message(clean_source, match.group(1).strip())
-                    command_executed = True
+            if actual_command_to_process == "netmsg":
+                # The 'args' now directly contains the message to be broadcasted,
+                # assuming 'netmsg' is the only command word.
+                # No need for re.match to strip the netname if it's not expected.
+                # The original 'args' variable already holds everything after 'netmsg'.
+
+                cur = self.db.cursor()
+                cur.execute("SELECT 1 FROM users WHERE callsign = ?", (clean_source,))
+                if not cur.fetchone():
+                    self._log_audit(
+                        direction="recv",
+                        source=clean_source,
+                        destination=self.callsign,
+                        message=text,
+                        msgid=None,
+                        rejected=True,
+                        note="NETMSG attempt by unregistered user"
+                    )
+                    self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
+                    return False
+
+                # Use the original 'args' directly as the message payload
+                # as it no longer contains the netname prefix to strip.
+                self._broadcast_message(clean_source, args.strip())
+                command_executed = True
                 return command_executed
     
             # Modified: Removed 'and args.upper() == self.netname.upper()'
