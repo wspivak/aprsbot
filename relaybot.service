@@ -5,6 +5,9 @@ After=network-online.target direwolf.service
 
 [Service]
 Type=simple
+ExecStartPre=/bin/mkdir -p /opt/aprsbot/logs
+ExecStartPre=/bin/bash -c '/usr/bin/touch /opt/aprsbot/logs/replybot.{log,err} && /bin/chown <FILL-IN> /opt/aprsbot/logs/replybot.{log,err}'
+ExecStartPre=/bin/sleep 15
 # I found that the bot couldn't find the network when it first started, thus added a delay
 ExecStartPre=/bin/sleep 15
 ExecStart=/<path to>/myenv/bin/python /<path to>/iorethd /<path to>/aprsbot.conf
