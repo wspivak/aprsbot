@@ -11,10 +11,10 @@ import hashlib
 
 # Configure the logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+    level=logging.INFO,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
     format='%(asctime)s - %(levelname)s - %(message)s', # This format string includes the timestamp
     handlers=[
-        logging.FileHandler("/opt/aprsbot/logs/replybot"), # Log to the specified file
+        logging.FileHandler("/opt/aprsbot/logs/replybot.log"), # Log to the specified file
         logging.StreamHandler(sys.stdout) # Also log to console (optional, but good for debugging)
     ]
 )
