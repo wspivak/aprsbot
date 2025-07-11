@@ -1,224 +1,190 @@
-#
-# Ioreth - An APRS library and bot
-# Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-
 import socket
-import select
-import time
 import logging
-
-logging.basicConfig()
-logger = logging.getLogger(__name__)
-
 from . import ax25
 
+logger = logging.getLogger(__name__)
 
-class TcpKissClient:
+
+class BaseClient:
+    def __init__(self, addr, port):
+        self.addr = addr
+        self.port = port
+        self.sock = None
+        self._connected = False
+        self.on_recv_frame = None
+
+    def connect(self):
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((self.addr, self.port))
+            self.sock.settimeout(None)
+            self._connected = True
+            logger.info(f"Connected to {self.addr}:{self.port}")
+
+            # APRS-IS only
+            if hasattr(self, "passcode") and hasattr(self, "callsign"):
+                login = f"user {self.callsign} pass {self.passcode} vers ERLIBot 1.0\n"
+                self.sock.sendall(login.encode())
+                logger.info("APRS-IS login sent")
+
+                if hasattr(self, "filter") and self.filter:
+                    self.sock.sendall(f"filter {self.filter}\n".encode())
+                    logger.info(f"APRS-IS filter sent: {self.filter}")
+        except Exception as e:
+            logger.error(f"Connection failed: {e}")
+            self._connected = False
+
+    def connect(self):
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((self.addr, self.port))
+            self.sock.settimeout(None)
+            self._connected = True
+            logger.info(f"Connected to {self.addr}:{self.port}")
+
+            login = f"user {self.callsign} pass {self.passcode} vers ERLIBot 1.0 filter {self.filter}\n"
+            self.sock.sendall(login.encode())
+            logger.info(f"APRS-IS login+filter sent inline: [{login.strip()}]")
+
+
+        except Exception as e:
+            logger.error(f"APRS-IS connection failed: {e}")
+            self._connected = False
+
+    def is_connected(self):
+        return self.sock is not None and self._connected and self.sock.fileno() >= 0
+
+    def loop(self):
+        raise NotImplementedError
+
+    def enqueue_frame(self, frame):
+        raise NotImplementedError
+
+
+class AprsIsClient(BaseClient):
+    def __init__(self, addr, port, callsign, passcode, aprs_filter=""):
+
+        super().__init__(addr, port)
+        self.callsign = callsign
+        self.passcode = passcode
+        self.buf = b""
+        self.filter = aprs_filter
+
+
+    def connect(self):
+        super().connect()
+
+    def loop(self):
+        try:
+            data = self.sock.recv(1024)
+            if not data:
+                logger.warning("APRS-IS socket returned empty — connection may have closed.")
+                self._connected = False
+                return
+
+            frame_str = data.decode(errors="replace").strip()
+            for line in frame_str.splitlines():
+                logger.debug(f"📨 Raw line from APRS-IS: {repr(line)}")
+                line = line.strip()
+                if not line or line.startswith("#"):  # Skip comments
+                    continue
+                try:
+                    frame = ax25.Frame.from_aprs_string(line)
+                    if self.on_recv_frame:
+                        self.on_recv_frame(frame)
+                except Exception as parse_err:
+                    logger.warning(f"APRS-IS frame parse failed: {parse_err}")
+                    logger.debug(f"Offending frame string: {repr(line)}")
+                    logger.debug(f"Failed frame string: {line}")
+        except socket.timeout:
+            logger.warning("APRS-IS read timed out.")
+            self._connected = False
+        except Exception as e:
+            logger.error(f"APRS-IS socket error: {e}")
+            self._connected = False
+
+
+    def enqueue_frame(self, frame):
+        try:
+            raw = frame.to_aprs_string()
+            if isinstance(raw, str):
+                raw = raw.encode()
+            self.sock.sendall(raw + b"\n")
+            logger.info(f"Sent to APRS-IS: {raw.decode(errors='replace')}")
+        except Exception as e:
+            logger.error(f"Send to APRS-IS failed: {e}")
+
+
+class RfKissClient(BaseClient):
     FEND = b"\xc0"
     FESC = b"\xdb"
     TFEND = b"\xdc"
     TFESC = b"\xdd"
     DATA = b"\x00"
-    FESC_TFESC = FESC + TFESC
-    FESC_TFEND = FESC + TFEND
 
-    def __init__(self, addr="localhost", port=8001):
-        self.addr = addr
-        self.port = port
-        self._sock = None
-        self._inbuf = bytearray()
-        self._outbuf = bytearray()
-        self._run = False
+    def __init__(self, addr, port, callsign="RF"):
+        super().__init__(addr, port)
+        self.callsign = callsign
+        self.inbuf = bytearray()
+        self.outbuf = bytearray()
 
-    def connect(self, timeout=10):
-        if self._sock:
-            self.disconnect()
-        self._inbuf.clear()
-        self._outbuf.clear()
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.settimeout(timeout)
-#        logger.debug("Connecting to TNC at %s:%s", repr(self.addr), self.port)
-#        logger.debug("Connecting to addr=%r port=%r", self.addr, self.port)
-#        logger.debug(f"Attempting connect to: addr={repr(self.addr)} port={self.port}")
-#        logger.debug(f"Connecting to addr={repr(self.addr)} port={self.port}")
-#        print(f"DEBUG: Connecting to addr={repr(self.addr)} port={self.port}")
-
-        self._sock.connect((self.addr, self.port))
-        self._sock.settimeout(None)
-        self.on_connect()
-
-    def disconnect(self):
-        if self._sock:
-            self._sock.close()
-            self._sock = None
-            self._inbuf.clear()
-            self._outbuf.clear()
-            self.on_disconnect()
-
-    def is_connected(self):
-        return bool(self._sock)
+    def connect(self):
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((self.addr, self.port))
+            self.sock.settimeout(None)
+            self._connected = True
+            logger.info(f"RF KISS connected to {self.addr}:{self.port}")
+        except Exception as e:
+            logger.error(f"RF KISS connection failed: {e}")
+            self._connected = False
 
     def loop(self):
-        poller = select.poll()
-        self._run = True
-
-        while self._run:
-            will_disconnect = False
-            fd = -1
-            if self.is_connected():
-                fd = self._sock.fileno()
-                flags = select.POLLIN | select.POLLHUP | select.POLLERR
-                if len(self._outbuf) > 0:
-                    flags |= select.POLLOUT
-                poller.register(fd, flags)
-
-            events = poller.poll(1000)
-
-            # There is only one :/
-            for _, evt in events:
-                if evt & (select.POLLHUP | select.POLLERR):
-                    will_disconnect = True
-
-                if evt & select.POLLIN:
-                    try:
-                         rdata = self._sock.recv(2048)
-                         if len(rdata) == 0:
-                             will_disconnect = True
-                         else:
-                             self._inbuf += rdata
-                    except ConnectionResetError:
-                         will_disconnect = True
-                         
-                         
-                if evt & select.POLLOUT:
-                    nsent = self._sock.send(self._outbuf)
-                    self._outbuf = self._outbuf[nsent:]
-
-            if fd >= 0:
-                poller.unregister(fd)
-
-            while len(self._inbuf) > 3:
-                # FEND, FDATA, escaped_data, FEND, ...
-                if self._inbuf[0] != ord(TcpKissClient.FEND):
-                    raise ValueError("Bad frame start")
-                lst = self._inbuf[2:].split(TcpKissClient.FEND, 1)
-                if len(lst) > 1:
-                    self._inbuf = lst[1]
-                    frame = (
-                        lst[0]
-                        .replace(TcpKissClient.FESC_TFEND, TcpKissClient.FEND)
-                        .replace(TcpKissClient.FESC_TFESC, TcpKissClient.FESC)
-                    )
-                    self.on_recv(frame)
-
-            self.on_loop_hook()
-
-#            if will_disconnect:
-#                self.disconnect()
-
-            if will_disconnect:
+        try:
+            data = self.sock.recv(2048)
+            if not data:
                 self.disconnect()
-                delay = 5
-                max_delay = 3600  # 1 hour
+                return
 
-                while delay <= max_delay and self._run:
-                    logger.warning("Disconnected. Attempting reconnect in %d seconds...", delay)
-                    time.sleep(delay)
-                    try:
-                        self.connect()
-                        logger.info("Reconnected successfully.")
-                        break
-                    except Exception as e:
-                        logger.error("Reconnect attempt failed: %s", e)
-                        delay = min(delay * 2, max_delay)
+            self.inbuf.extend(data)
 
+            while len(self.inbuf) > 3:
+                if self.inbuf[0] != self.FEND[0]:
+                    self.inbuf.pop(0)
+                    continue
 
+                lst = self.inbuf[2:].split(self.FEND, 1)
+                if len(lst) < 2:
+                    break
 
-    def exit_loop(self):
-        self._run = False
+                raw_frame, self.inbuf = lst[0], lst[1]
 
-    def write_frame(self, frame_bytes):
-        """Send a complete frame."""
-        if not self.is_connected():
-            return
-        esc_frame = frame_bytes.replace(
-            TcpKissClient.FESC, TcpKissClient.FESC_TFESC
-        ).replace(TcpKissClient.FEND, TcpKissClient.FESC_TFEND)
-        self._outbuf += (
-            TcpKissClient.FEND + TcpKissClient.DATA + esc_frame + TcpKissClient.FEND
-        )
+                frame_data = (
+                    raw_frame.replace(self.FESC + self.TFEND, self.FEND)
+                             .replace(self.FESC + self.TFESC, self.FESC)
+                )
 
-    def on_connect(self):
-        pass
+                try:
+                    frame = ax25.Frame.from_kiss_bytes(frame_data)
+                    logger.info(f"RF KISS RECV: {str(frame)}")
+                    if self.on_recv_frame:
+                        self.on_recv_frame(frame)
+                except Exception as e:
+                    logger.warning(f"RF KISS frame parse failed: {e}")
 
-    def on_recv(self, frame_bytes):
-        pass
-
-    def on_disconnect(self):
-        pass
-
-    def on_loop_hook(self):
-        pass
-
-
-class AprsClient(TcpKissClient):
-    def __init__(self, host="localhost", port=8001):
-        TcpKissClient.__init__(self, host, port)
-        self._snd_queue = []
-        self._snd_queue_interval = 2
-        self._snd_queue_last = time.monotonic()
-        self._frame_cnt = 0
-
-    def send_frame_bytes(self, frame_bytes):
-        try:
-            logger.debug("SEND: %s", frame_bytes.hex())
-            self.write_frame(frame_bytes)
-        except Exception as exc:
-            logger.warning(exc)
-
-    def on_recv(self, frame_bytes):
-        try:
-            frame = ax25.Frame.from_kiss_bytes(frame_bytes)
-            logger.info("RECV: %s", str(frame))
-            self.on_recv_frame(frame)
-        except Exception as exc:
-            logger.warning(exc)
-
-    def on_recv_frame(self, frame):
-        pass
+        except Exception as e:
+            logger.error(f"RF KISS socket error: {e}")
+            self.disconnect()
 
     def enqueue_frame(self, frame):
-        logger.debug("AX.25 frame %d: %s", self._frame_cnt, frame.to_aprs_string())
-        self.enqueue_frame_bytes(frame.to_kiss_bytes())
-
-    def enqueue_frame_bytes(self, data_bytes):
-        logger.debug("AX.25 frame %d enqueued for sending", self._frame_cnt)
-        self._snd_queue.append((self._frame_cnt, data_bytes))
-        self._frame_cnt += 1
-
-    def _dequeue_frame_bytes(self):
-        now = time.monotonic()
-        if now < (self._snd_queue_last + self._snd_queue_interval):
-            return
-        self._snd_queue_last = now
-        if len(self._snd_queue) > 0:
-            num, frame_bytes = self._snd_queue.pop(0)
-            logger.debug("Sending queued AX.25 frame %d", num)
-            self.send_frame_bytes(frame_bytes)
-
-    def on_loop_hook(self):
-        self._dequeue_frame_bytes()
+        try:
+            kiss_bytes = frame.to_kiss_bytes()
+            escaped = (
+                kiss_bytes.replace(self.FESC, self.FESC + self.TFESC)
+                          .replace(self.FEND, self.FESC + self.TFEND)
+            )
+            pkt = self.FEND + self.DATA + escaped + self.FEND
+            self.sock.sendall(pkt)
+            logger.info(f"Sent to RF: {frame.to_aprs_string().decode(errors='replace')}")
+        except Exception as e:
+            logger.error(f"KISS frame send failed: {e}")

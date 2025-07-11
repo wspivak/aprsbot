@@ -7,10 +7,11 @@ import re
 import random
 import sqlite3
 import difflib
+import hashlib  
 
 # Configure the logging
 logging.basicConfig(
-    level=logging.INFO,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+    level=logging.DEBUG,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
     format='%(asctime)s - %(levelname)s - %(message)s', # This format string includes the timestamp
     handlers=[
         logging.FileHandler("/opt/aprsbot/logs/replybot"), # Log to the specified file
@@ -21,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 from cronex import CronExpression
 
-from .clients import AprsClient
+from .clients import AprsIsClient
+from .clients import AprsIsClient, RfKissClient
+
 from . import aprs
 from . import remotecmd
 from . import utils
@@ -95,7 +98,7 @@ class BotAprsHandler(aprs.Handler):
         self.aliases = { self.callsign.upper() }
         aliases_from_config = cfg.get("aprs", "aliases", fallback="")
         self.aliases.update(
-            alias.strip().upper()
+            alias.strip().strip('"').upper()
             for alias in aliases_from_config.split(",")
             if alias.strip()
         )
@@ -251,6 +254,7 @@ class BotAprsHandler(aprs.Handler):
         logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
                       source, addressee, text, msgid, via)
         logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
+        logger.warning("🔥 handle_frame() was triggered — frame inbound")
 
         cleaned = self.sanitize_text(text)
 
@@ -488,7 +492,11 @@ class BotAprsHandler(aprs.Handler):
         original_callsign = self.callsign
         self.callsign = "ERLI"
         frame = self.make_aprs_status(text)
-        self._client.enqueue_frame(frame)
+        for label, client in self.clients.items():
+            if client.is_connected():
+                client.enqueue_frame(frame)
+                logger.info(f"Beaconed as ERLI via {label}: {text}")
+
         logger.info(f"Beaconed as ERLI: {text}")
         self.callsign = original_callsign
 
@@ -506,8 +514,15 @@ class BotAprsHandler(aprs.Handler):
             self.send_aprs_msg(callsign, msg, is_ack=False)
 
     def send_aprs_status(self, status):
-        self._client.enqueue_frame(self.make_aprs_status(status))
-        self.send_aprs_msg("APRS", ">ERLI is active here at KC2NJV-4.", is_ack=False)
+        frame = self.make_aprs_status(status)
+        for label, client in self.clients.items():
+            if client.is_connected():
+                client.enqueue_frame(frame)
+                logger.info(f"Status frame sent via {label}: {status}")
+
+        # Dynamic status message using current bot identity
+        self.send_aprs_msg("APRS", f">ERLI is active here at {self.callsign}.", is_ack=False)
+
 
     def _broadcast_message(self, source, message):
         cur = self.db.cursor()
@@ -531,25 +546,21 @@ class BotAprsHandler(aprs.Handler):
         logging.info(f"Sent user list to {source}")
 
     def send_aprs_msg(self, to_call, text, is_ack=False):
-        if not self._client.is_connected():
-            logger.warning(f"Client not connected - cannot send message to {to_call}")
-            return
-
-        logger.info("Sending APRS message to %s: %s", to_call, text)
         frame = self.make_aprs_msg(to_call, text)
-        logger.info("Built APRS frame: %s", frame.to_aprs_string())
-        self._client.enqueue_frame(frame)
-        logger.info("Frame enqueued to APRS-IS: %s", frame.to_aprs_string())
-        cache_sent_message(to_call, text)
+        for label, client in self.clients.items():
+            if client.is_connected():
+                client.enqueue_frame(frame)
+                logger.info(f"Sent via {label}: {to_call} -> {text}")
+                cache_sent_message(to_call, text)
+                if not is_ack:
+                    self._log_audit(
+                        direction="sent",
+                        source=self.callsign,
+                        destination=to_call,
+                        message=text,
+                        msgid=None
+                    )
 
-        if not is_ack:
-            self._log_audit(
-                direction="sent",
-                source=self.callsign,
-                destination=to_call,
-                message=text,
-                msgid=None
-            )
 
 class SystemStatusCommand(remotecmd.BaseRemoteCommand):
     def __init__(self, cfg):
@@ -578,69 +589,173 @@ class SystemStatusCommand(remotecmd.BaseRemoteCommand):
         return " " + label + (":Ok" if ret else ":Err")
 
 
-class ReplyBot(AprsClient):
+class ReplyBot:
     def __init__(self, config_file):
-        super().__init__()
-
+        
         self._config_file = config_file
-
-        self._config_mtime = None
         self._cfg = configparser.ConfigParser()
         self._cfg.optionxform = str
+        self._cfg.read(self._config_file)
 
-        self._aprs = BotAprsHandler("", self, config_file=self._config_file)
+        if self._cfg.has_section("aprs"):
+            callsign_from_cfg = self._cfg["aprs"].get("callsign", "N0CALL").strip()
+        else:
+            logger.warning("[aprs] section missing in config — defaulting to N0CALL")
+            callsign_from_cfg = "N0CALL"
+            aliases_from_cfg = set(a.strip().upper() for a in self._cfg["aprs"].get("aliases", "").split(",") if a.strip())
+            aliases_from_cfg.add(callsign_from_cfg.upper())
+
+        self._aprs_handler = BotAprsHandler(callsign_from_cfg, None, config_file=config_file)
+
+
+        # Store TNC clients
+        self.clients = {}
+        self._aprs_handler.clients = self.clients  # Share client dictionary with handler
+
+        # Load client config (RF + APRS-IS)
+        self._load_config()
+
+        # Connect each client so they're live
+        for label, client in self.clients.items():
+            try:
+                client.connect()
+                logger.info(f"{label} client connected: {client.is_connected()}")
+            except Exception as e:
+                logger.error(f"{label} client failed to connect: {e}")
+
+        # 🧪 Inject a simulated frame to verify bot handling logic
+
+
+        try:
+            from . import ax25
+            logger.warning("🔧 Injecting test frame: KC2NJV-4>ERLI:ping")
+
+            test_str = "KC2NJV-4>ERLI:ping"
+            test_frame = ax25.Frame.from_aprs_string(test_str)
+
+            self._aprs_handler.handle_frame(test_frame)
+            
+            logger.warning("✅ Test frame passed to handler")
+
+        except Exception as e:
+            logger.error(f"Test frame injection failed: {e}")
+
+
 
         self._last_blns = time.monotonic()
         self._last_cron_blns = 0
         self._last_status = time.monotonic()
         self._last_reconnect_attempt = 0
         self._rem = remotecmd.RemoteCommandHandler()
-
+        self._config_mtime = 0.0
         self._check_updated_config()
 
 
+
     def _load_config(self):
-        try:
-            self._cfg.clear()
-            self._cfg.read(self._config_file)
-            self.addr = self._cfg["tnc"]["addr"]
-            self.port = int(self._cfg["tnc"]["port"])
+        
 
-            callsign = self._cfg["aprs"]["callsign"]
-            path = self._cfg["aprs"]["path"]
+        # Load RF TNC
+        if self._cfg.has_section("tnc_rf"):
+            rf_addr = self._cfg["tnc_rf"]["addr"]
+            rf_port = int(self._cfg["tnc_rf"]["port"])
+            rf_callsign = self._cfg["aprs"].get("callsign", "RF").strip()
 
-            self._aprs = BotAprsHandler(callsign, self, config_file=self._config_file)
-            self._aprs.path = path
+            rf_client = RfKissClient(addr=rf_addr, port=rf_port)
+            rf_client.callsign = rf_callsign  # ✅ Assign real callsign
+            rf_client.on_recv_frame = self._aprs_handler.handle_frame
+            self.clients["rf"] = rf_client
 
-            logger.info(f"Bot initialized with callsign: {self._aprs.callsign}, aliases: {self._aprs.aliases}")
 
-        except Exception as exc:
-            logger.error("Failed to load config: %s", exc)
-            logger.error(exc)
+
+        # Load APRS-IS TNC
+        if self._cfg.has_section("tnc_aprsis"):
+            is_addr = self._cfg["tnc_aprsis"]["addr"]
+            is_port = int(self._cfg["tnc_aprsis"]["port"])
+            callsign = self._cfg["tnc_aprsis"].get("callsign", self._cfg["aprs"].get("callsign", "N0CALL")).strip()
+            passcode = self._cfg["tnc_aprsis"].get("passcode", "00000").strip()
+            filter_str = self._cfg["tnc_aprsis"].get("filter", "")
+
+            aprsis_client = AprsIsClient(
+                addr=is_addr,
+                port=is_port,
+                callsign=callsign,
+                passcode=passcode,
+                aprs_filter=filter_str  # ✅ pass the filter early
+)
+
+            aprsis_client.filter = filter_str  # ✅ Adds filter property
+
+            aprsis_client.on_recv_frame = self._aprs_handler.handle_frame
+            self.clients["aprsis"] = aprsis_client
+        logger.info("Loaded both RF and APRS-IS interfaces")
+
 
     def _check_updated_config(self):
         try:
             mtime = os.stat(self._config_file).st_mtime
-            if self._config_mtime != mtime:
+        except Exception as exc:
+            logger.error(exc)
+            return
+        def _get_config_hash(file_path):
+            """
+            Computes an MD5 hash of the config file contents for change tracking.
+            Returns the hex digest as a string, or None if file cannot be read.
+            """
+            try:
+                with open(file_path, "rb") as f:
+                    return hashlib.md5(f.read()).hexdigest()
+            except Exception as e:
+                logger.error(f"Failed to hash config file: {e}")
+                return None
+
+        try:
+            new_hash = _get_config_hash(self._config_file)
+            if self._config_mtime != mtime and new_hash != getattr(self, "_config_hash", ""):
                 self._load_config()
                 self._config_mtime = mtime
+                self._config_hash = new_hash
                 logger.info("Configuration reloaded")
         except Exception as exc:
             logger.error(exc)
 
+    def is_connected(self):
+        # Return True if any TNC client is currently connected
+        return any(client.is_connected() for client in self.clients.values())
+
+
     def on_connect(self):
         logger.info("Connected")
+
+        try:
+            if self._cfg.has_option("tnc_aprsis", "filter"):
+                filter_str = self._cfg.get("tnc_aprsis", "filter")
+                if hasattr(self, 'sock') and self.sock and self.sock.fileno() >= 0:
+                    logger.info(f"Sending APRS-IS filter: {filter_str}")
+                    self.sock.sendall(f"filter {filter_str}\n".encode())
+                else:
+                    logger.warning("Cannot send filter: self.sock not available or invalid.")
+            else:
+                logger.info("No filter defined in [tnc] section of config.")
+        except Exception as e:
+            logger.error(f"Failed to send APRS-IS filter: {e}")
+
 
     def on_disconnect(self):
         logger.warning("Disconnected! Will try again soon...")
 
     def on_recv_frame(self, frame):
         logger.debug("Received frame object: %s", frame)
+        logger.warning("🔥 handle_frame() was triggered — frame inbound")
+
         try:
-            logger.warning("RECV FRAME: %s", frame.to_aprs_string().decode(errors="replace"))
-        except Exception:
-            logger.warning("RECV FRAME (could not decode)")
-        self._aprs.handle_frame(frame)
+            frame_str = frame.to_aprs_string().decode(errors="replace")
+            logger.warning("RECV FRAME: %s", frame_str)
+        except Exception as e:
+            logger.warning("RECV FRAME (could not decode): %s", e)
+
+        self._aprs_handler.handle_frame(frame)
+
 
 
     def _update_bulletins(self):
@@ -710,7 +825,7 @@ class ReplyBot(AprsClient):
             to_send.sort()
             for (bln, text) in to_send:
                 logger.info("Posting bulletin: %s=%s", bln, text)
-                self._aprs.send_aprs_msg(bln, text)
+                self._aprs_handler.send_aprs_msg(bln, text)
 
     def _update_status(self):
         if not self._cfg.has_section("status"):
@@ -735,38 +850,64 @@ class ReplyBot(AprsClient):
         except Exception:
             self._last_reconnect_attempt = 0.0
 
-        if self.is_connected():
+        if time.monotonic() < self._last_reconnect_attempt + 5:
             return
 
-        try:
-            if time.monotonic() > self._last_reconnect_attempt + 5:
-                logger.info("Trying to reconnect")
-                self._last_reconnect_attempt = time.monotonic()
-                self.connect()
-        except ConnectionRefusedError as e:
-            logger.warning(e)
+        self._last_reconnect_attempt = time.monotonic()
+
+        for label, client in self.clients.items():
+            if not client.is_connected():
+                try:
+                    logger.info(f"Trying to reconnect {label}")
+                    client.connect()
+                    logger.info(f"{label} reconnected: {client.is_connected()}")
+                    passcode_str = getattr(client, "passcode", None)
+
+                    callsign_str = getattr(client, "callsign", label)
+                    #logger.warning(f"[{callsign_str}] Loop is executing for {label}")
+                    callsign_str = getattr(client, "callsign", label)
+                    logger.warning(f"[{callsign_str}] Loop is executing for {label}")
+
+
+
+                except ConnectionRefusedError as e:
+                    logger.warning(f"{label} reconnect failed: {e}")
+                except Exception as e:
+                    logger.error(f"{label} reconnect error: {e}")
+
 
     def on_loop_hook(self):
-        AprsClient.on_loop_hook(self)
+
         self._check_updated_config()
         self._check_reconnection()
         self._update_bulletins()
         self._update_status()
+        # ✅ FRAME POLLING — process inbound APRS-IS and RF frames
+        for label, client in self.clients.items():
+            logger.debug(f"{label} connected: {client.is_connected()}")
+            logger.debug(f"Polling APRS-IS loop")
+
+            try:
+                client.loop()
+                logger.debug(f"Polling APRS-IS loop")
+
+            except Exception as e:
+                logger.error(f"Error in {label} client.loop(): {e}")
 
 
         now = time.monotonic()
         if not hasattr(self, "_last_erli_beacon"):
             self._last_erli_beacon = 0
+        # NEW: Ensure each TNC client processes its input
+
         if now - self._last_erli_beacon > 900:
             self._last_erli_beacon = now
-
-
-            beacon_text = self._aprs.beacon_message_template.format(
-                alias=self._aprs.user_defined_beacon_alias,
-                call=self._aprs.callsign
+            beacon_text = self._aprs_handler.beacon_message_template.format(
+                alias=self._aprs_handler.user_defined_beacon_alias,
+                call=self._aprs_handler.callsign
             )
 
-            self._aprs.beacon_as_erli(beacon_text)
+            self._aprs_handler.beacon_as_erli(beacon_text)
 
         while True:
             rcmd = self._rem.poll_ret()
@@ -778,4 +919,4 @@ class ReplyBot(AprsClient):
         logger.debug("ret = %s", cmd)
 
         if isinstance(cmd, SystemStatusCommand):
-            self._aprs.send_aprs_status(cmd.status_str)
+            self._aprs_handler.send_aprs_status(cmd.status_str)
