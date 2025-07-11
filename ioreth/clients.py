@@ -188,3 +188,14 @@ class RfKissClient(BaseClient):
             logger.info(f"Sent to RF: {frame.to_aprs_string().decode(errors='replace')}")
         except Exception as e:
             logger.error(f"KISS frame send failed: {e}")
+
+    def disconnect(self):
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        self.sock = None
+        self._connected = False
+        logging.info(f"Disconnected from {self.addr}:{self.port}")
+
