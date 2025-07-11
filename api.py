@@ -30,6 +30,7 @@ def query_audit_log():
             TRIM(LOWER(al.destination)) AS destination,
             TRIM(al.message) AS message,
             REPLACE(TRIM(al.msgid), X'0D', '') AS msgid,
+            al.transport,
             al.rejected
         FROM
             audit_log AS al
@@ -60,7 +61,7 @@ def query_audit_log():
     rows = cursor.fetchall()
     conn.close()
 
-    columns = ['timestamp', 'direction', 'source', 'destination', 'message', 'msgid', 'rejected']
+    columns = ['timestamp', 'direction', 'source', 'destination', 'message', 'msgid', 'rejected', 'transport']
     trimmed_logs = []
     for row in rows:
         row_dict = dict(zip(columns, row))
