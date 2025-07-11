@@ -2,39 +2,41 @@
 import sys, logging, time, signal
 from ioreth.bot import ReplyBot
 
-logging.basicConfig(level=logging.INFO,
-    format="%(asctime)-15s %(levelname)s: %(funcName)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)-15s %(levelname)s: %(funcName)s %(message)s"
+)
 logger = logging.getLogger(__name__)
 
+should_run = True
+
 def shutdown(signum, frame):
-    logger.info("shutdown signal received, exiting")
-    sys.exit(0)
+    global should_run
+    logger.info("Shutdown signal received, stopping bot loop.")
+    should_run = False
 
 signal.signal(signal.SIGINT, shutdown)
 signal.signal(signal.SIGTERM, shutdown)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: %s <config-file.conf>" % sys.argv[0])
+        print(f"Usage: {sys.argv[0]} <config-file.conf>")
         sys.exit(1)
 
-    b = ReplyBot(sys.argv[1])
-
-    # connect to Direwolf (the TNC)
-    for attempt in range(5):
-        try:
-            b.connect()
-            break
-        except ConnectionRefusedError:
-            print(f"[Retry {attempt+1}] Direwolf not ready, retrying in 3s…")
-            time.sleep(3)
-    else:
-        print("Failed to connect after multiple attempts, exiting.")
-        sys.exit(1)
-
-    # now start processing input/output
     try:
-        b.loop()
-    except Exception:
-        logger.exception("Fatal error in bot.loop()")
+        b = ReplyBot(sys.argv[1])
+    except Exception as e:
+        logger.exception("Failed to initialize ReplyBot")
         sys.exit(1)
+
+    logger.info("Bot initialized, entering main loop")
+
+    while should_run:
+        try:
+            b.on_loop_hook()
+            time.sleep(1)  # Adjust loop frequency as needed
+        except Exception:
+            logger.exception("Fatal error in bot loop")
+            time.sleep(3)
+
+    logger.info("Bot shutdown complete.")
