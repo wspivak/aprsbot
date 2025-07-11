@@ -172,7 +172,8 @@ class BotAprsHandler(aprs.Handler):
                 message TEXT,
                 msgid TEXT,
                 rejected BOOLEAN DEFAULT 0,
-                note TEXT
+                note TEXT,
+                transport TEXT
             )
         """)
 
@@ -190,6 +191,7 @@ class BotAprsHandler(aprs.Handler):
                 message,
                 msgid,
                 rejected,
+                transport,
                 timestamp DESC
             );
         """)
@@ -212,15 +214,15 @@ class BotAprsHandler(aprs.Handler):
         except Exception as e:
             logger.error(f"DB error: {e}")
 
-    def _log_audit(self, direction, source, destination, message, msgid=None, rejected=False, note=None):
+    def _log_audit(self, direction, source, destination, message, msgid=None, rejected=False, note=None, transport=None):
         try:
             cur = self.db.cursor()
             cur.execute("""
-                INSERT INTO audit_log (direction, source, destination, message, msgid, rejected, note)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (direction, source, destination, message, msgid, int(rejected), note))
+                INSERT INTO audit_log (direction, source, destination, message, msgid, rejected, note, transport)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (direction, source, destination, message, msgid, int(rejected), note, transport))
             self.db.commit()
-            logger.debug(f"Audit logged: {direction} {source} -> {destination}: {message}")
+            logger.debug(f"Audit logged: {direction} {source} -> {destination}: {message} [{transport}]")
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
 
@@ -279,7 +281,8 @@ class BotAprsHandler(aprs.Handler):
                     message=text,
                     msgid=msgid,
                     rejected=True,
-                    note="Loopback detected and rejected"
+                    note="Loopback detected and rejected",
+                    transport= None
                 )
                 return
 
@@ -293,7 +296,8 @@ class BotAprsHandler(aprs.Handler):
                 message=cleaned,
                 msgid=msgid,
                 rejected=True,
-                note="Addressee not in aliases"
+                note="Addressee not in aliases",
+                transport=  None
             )
             return
 
@@ -306,7 +310,8 @@ class BotAprsHandler(aprs.Handler):
                 message=cleaned,
                 msgid=msgid,
                 rejected=True,
-                note="Blacklisted direct source"
+                note="Blacklisted direct source",
+                transport=  None
             )
             return
 
@@ -328,7 +333,8 @@ class BotAprsHandler(aprs.Handler):
                         message=cleaned,
                         msgid=msgid,
                         rejected=True,
-                        note="Blacklisted encapsulated source"
+                        note="Blacklisted encapsulated source",
+                        transport= None
                     )
                     return
 
@@ -348,7 +354,8 @@ class BotAprsHandler(aprs.Handler):
             message=cleaned,
             msgid=msgid,
             rejected=False,
-            note=f"Received and processed. Command handled: {was_command_handled}"
+            note=f"Received and processed. Command handled: {was_command_handled}",
+            transport=  None
         )
 
     def handle_aprs_query(self, source, text, origframe):
@@ -432,7 +439,8 @@ class BotAprsHandler(aprs.Handler):
                         message=text,
                         msgid=None,
                         rejected=True,
-                        note="NETMSG attempt by unregistered user"
+                        note="NETMSG attempt by unregistered user",
+                        transport=  None
                     )
                     self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
                     return False
@@ -465,7 +473,8 @@ class BotAprsHandler(aprs.Handler):
                         message=text,
                         msgid=None,
                         rejected=True,
-                        note=f"Unauthorized attempt to '{actual_command_to_process}' by non-admin"
+                        note=f"Unauthorized attempt to '{actual_command_to_process}' by non-admin",
+                        transport=  None
                     )
                     return False
     
@@ -558,7 +567,8 @@ class BotAprsHandler(aprs.Handler):
                         source=self.callsign,
                         destination=to_call,
                         message=text,
-                        msgid=None
+                        msgid=None,
+                        transport=  None
                     )
 
 
