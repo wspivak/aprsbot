@@ -1,6 +1,6 @@
 #
 # Ioreth - An APRS library and bot
-# Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
+# Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -9,16 +9,20 @@
 #
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
 """
 Random utilities for handling AX25 frames
 """
+import logging
+
+logger = logging.getLogger(__name__)
+# logger.setLevel(logging.DEBUG) # Remove or comment out this line if you added it temporarily
 
 _ADDR_DIGIPEATED_BIT = 0b10000000
 _ADDR_END_OF_PATH_BIT = 1
@@ -50,7 +54,11 @@ def parse_address_string(addr_str):
         addr_str = addr_str[:-1]
     lst = addr_str.split("-", 1)
     if len(lst) == 2:
-        ssid = int(lst[1])
+        try:
+            ssid = int(lst[1])
+        except ValueError:
+            logger.warning(f"Could not parse SSID from '{lst[1]}' in address '{addr_str}'. Defaulting to SSID 0.")
+            ssid = 0
     return lst[0], ssid, digipeated
 
 def pack_address_string(addr_str, end_of_path=False):
@@ -146,7 +154,7 @@ class Frame:
         pos += 7
 
         addr_list = []
-        while pos < dlen - 7:
+        while pos < dlen - 2: # Changed condition to dlen - 2 to ensure control/pid bytes are present
             addr_list.append(Address.from_bytes(fdata[pos:pos+7]))
             pos += 7
             if addr_list[-1].end_of_path:
@@ -156,7 +164,7 @@ class Frame:
         path = addr_list[1:]
 
         if pos >= dlen - 2:
-            raise ValueError("Invalid frame data: " + fdata.hex())
+            raise ValueError("Invalid frame data: not enough bytes for control, PID, and info: " + fdata.hex())
 
         control = fdata[pos]
         pid = fdata[pos+1]
@@ -187,28 +195,49 @@ class Frame:
     @staticmethod
     def from_aprs_string(frame):
         if isinstance(frame, str):
-            frame = frame.encode("utf-8", errors="replace")
+            frame_bytes = frame.encode("utf-8", errors="replace") # Use a new variable for bytes
         elif not isinstance(frame, bytes):
-            raise TypeError(f"Expected str or bytes, got {type(frame).__name__}")
+            raise TypeError(f"Expected str or bytes, got {type(frame).__name__} for frame: {repr(frame)}")
+        else:
+            frame_bytes = frame # If it's already bytes, use it directly
 
-        lst = frame.split(b":", 1)
+        lst = frame_bytes.split(b":", 1) # Use frame_bytes here
         if len(lst) != 2:
-            raise ValueError("Bad APRS frame string")
+            # MODIFIED: Include the problematic frame in the error message
+            raise ValueError(f"Bad APRS frame string: Missing colon delimiter. Frame: {repr(frame.decode('utf-8', errors='replace'))}")
 
         headers = lst[0].decode("ascii", errors="replace")
         info = lst[1]
 
         lst = headers.split(">", 1)
         if len(lst) != 2:
-            raise ValueError("Bad headers in APRS frame string")
+            # MODIFIED: Include the problematic headers in the error message
+            raise ValueError(f"Bad headers in APRS frame string: Missing > delimiter. Headers: {repr(headers)}")
 
-        source = Address.from_string(lst[0])
-        addrs = [Address.from_string(s) for s in lst[1].split(",")]
+        source_str = lst[0].strip()
+        if not source_str:
+            raise ValueError(f"Empty source callsign in APRS frame string. Headers: {repr(headers)}")
+        source = Address.from_string(source_str)
+
+        path_str = lst[1].strip()
+        if not path_str:
+            # This case might be valid for direct messages without a path,
+            # but the existing code expects a destination.
+            # For now, we'll keep the error if no path/destination is found.
+            raise ValueError(f"Empty destination/path in APRS frame string. Headers: {repr(headers)}")
+
+        addrs = []
+        for s in path_str.split(","):
+            s_stripped = s.strip()
+            if s_stripped:
+                addrs.append(Address.from_string(s_stripped))
+
         if len(addrs) == 0:
-            raise ValueError("No destination address in APRS frame string")
+            raise ValueError(f"No valid destination address in APRS frame string. Headers: {repr(headers)}")
 
         dest = addrs[0]
-        addrs[-1].end_of_path = True
+        if addrs:
+            addrs[-1].end_of_path = True
         path = addrs[1:]
 
         f = Frame(source, dest, path, APRS_CONTROL_FLD, APRS_PROTOCOL_ID, info)
@@ -222,7 +251,7 @@ class Frame:
             + self.dest.to_string().encode("ASCII")
         )
         if len(self.path) > 0:
-            buf += b"," + b"".join(a.to_string().encode("ASCII") for a in self.path)
+            buf += b"," + b",".join(a.to_string().encode("ASCII") for a in self.path)
         buf += b":" + self.info
         return buf
 
