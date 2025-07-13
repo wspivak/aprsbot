@@ -11,7 +11,7 @@ import hashlib
 
 # Configure the logging
 logging.basicConfig(
-    level=logging.INFO,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+    level=logging.DEBUG,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
     format='%(asctime)s - %(levelname)s - %(message)s', # This format string includes the timestamp
     handlers=[
         logging.FileHandler("/opt/aprsbot/logs/replybot.log"), # Log to the specified file
@@ -449,6 +449,16 @@ class BotAprsHandler(aprs.Handler):
                 # as it no longer contains the netname prefix to strip.
                 self._broadcast_message(clean_source, args.strip())
                 command_executed = True
+                self._log_audit(
+                    direction="recv",
+                    source=clean_source,
+                    destination=self.callsign, # Or the specific addressee for the command if different
+                    message=text, # The original message received
+                    msgid=None, # Or the original msgid if available
+                    rejected=False,
+                    note="NETMSG command successfully processed and broadcast initiated.",
+                    transport=None
+                )                
                 return command_executed
     
             # Modified: Removed 'and args.upper() == self.netname.upper()'
