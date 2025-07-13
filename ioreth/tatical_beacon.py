@@ -3,12 +3,12 @@ import time
 
 APRS_IS_SERVER = 'rotate.aprs2.net'
 APRS_IS_PORT = 14580
-CALLSIGN = '<tatical callsign>'
-LOGIN_CALL = '<callsign>'  # must be real
-PASSCODE = '12345'  # replace with real passcode from https://apps.magicbug.co.uk/passcode/
+CALLSIGN = 'ERLI'
+LOGIN_CALL = 'KC2NJV-4'  # must be real
+PASSCODE = '16569'  # replace with real passcode from https://apps.magicbug.co.uk/passcode/
 
-BEACON_TEXT = '><tatical callsign> tactical alias for <callsign>'
-POSITION = '!403.38N/07331.34W-'  # or '!' + your latitude/longitude + symbol
+BEACON_TEXT = '>ERLI tactical alias for KC2NJV-4'
+POSITION = '!4040.33N/07331.98W-'  # or '!' + your latitude/longitude + symbol
 SYMBOL = '-'  # house, or use other symbols as needed
 
 def connect_and_beacon():
