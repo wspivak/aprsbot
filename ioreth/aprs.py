@@ -1,6 +1,6 @@
 #
 # Ioreth - An APRS library and bot
-# Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
+# Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -9,11 +9,11 @@
 #
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
 import logging
@@ -74,7 +74,7 @@ class Handler:
 
         if payload[0] == ord(b"}"):
             # Got a third-party APRS packet, check the payload.
-            # PP5ITT-10>APDW15,PP5JRS-15*,WIDE2-1:}PP5ITT-7>APDR15,TCPIP,PP5ITT-10*::PP5ITT-10:ping 00:01{17
+            # PP5ITT-10>APDW15,PP5JRS-15*,WIDE2-1:}PP5ITT-10>APDR15,TCPIP,PP5ITT-10*::PP5ITT-10:ping 00:01{17
 
             # This is tricky: according to the APRS Protocol Reference 1.0.1,
             # chapter 17, the path may be both in TNC-2 encoding or in AEA
@@ -110,7 +110,14 @@ class Handler:
 
             payload = destpath_payload[1]
 
-        self.on_aprs_packet(frame, source, payload, via)
+        # Wrap the call to on_aprs_packet in a try-except block
+        # This is where the actual parsing of the payload by data type happens
+        try:
+            self.on_aprs_packet(frame, source, payload, via)
+        except Exception as e:
+            # Log the error, the source, and the problematic payload
+            logger.error(f"Error processing APRS packet from {source} with payload '{payload.decode('utf-8', errors='replace')}': {e}")
+
 
     def on_aprs_packet(self, origframe, source, payload, via=None):
         """A APRS packet was received, possibly through a third-party forward.
@@ -143,13 +150,37 @@ class Handler:
         elif data_type == ord(b"<"):
             self.on_aprs_capabilities(origframe, source, payload, via)
         elif data_type == ord(b"!"):
-            self.on_aprs_position_wtr(origframe, source, payload, via)
+            # This is the likely culprit for 'WX'
+            try:
+                self.on_aprs_position_wtr(origframe, source, payload, via)
+            except ValueError as e:
+                logger.error(f"ValueError in on_aprs_position_wtr for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
+            except Exception as e:
+                logger.error(f"Unexpected error in on_aprs_position_wtr for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
         elif data_type == ord(b"@"):
-            self.on_aprs_position_ts_msg(origframe, source, payload, via)
+            # Also a position packet, could have similar issues
+            try:
+                self.on_aprs_position_ts_msg(origframe, source, payload, via)
+            except ValueError as e:
+                logger.error(f"ValueError in on_aprs_position_ts_msg for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
+            except Exception as e:
+                logger.error(f"Unexpected error in on_aprs_position_ts_msg for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
         elif data_type == ord(b"="):
-            self.on_aprs_position_msg(origframe, source, payload, via)
+            # Another position packet type
+            try:
+                self.on_aprs_position_msg(origframe, source, payload, via)
+            except ValueError as e:
+                logger.error(f"ValueError in on_aprs_position_msg for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
+            except Exception as e:
+                logger.error(f"Unexpected error in on_aprs_position_msg for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
         elif data_type == ord(b"/"):
-            self.on_aprs_position_ts(origframe, source, payload, via)
+            # Yet another position packet type
+            try:
+                self.on_aprs_position_ts(origframe, source, payload, via)
+            except ValueError as e:
+                logger.error(f"ValueError in on_aprs_position_ts for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
+            except Exception as e:
+                logger.error(f"Unexpected error in on_aprs_position_ts for source {source}, payload '{payload.decode('utf-8', errors='replace')}': {e}. Skipping further processing for this packet.")
         elif data_type == ord(b"T"):
             self.on_aprs_telemetry(origframe, source, payload, via)
         elif data_type == ord(b"`"):
@@ -230,6 +261,12 @@ class Handler:
         PP5JR-15>APNU3B,WIDE1-1,WIDE3-3:!2741.46S/04908.89W#PHG7460/REDE SUL APRS BOA VISTA RANCHO QUEIMADO SC
         PY5CTV-13>APTT4,PP5BAU-15*,PP5JRS-15*:! Weather Station ISS Davis Morro do Caratuva - PR
         """
+        # This is where the problematic parsing likely happens.
+        # Even if this function is 'pass', if the client or other parts
+        # of the system try to interpret the payload, it might fail.
+        # For now, we'll just log that we received it.
+        # If actual parsing logic were here, we'd add try-except around int/float conversions.
+        logger.debug(f"Received WX/Position packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
 
     def on_aprs_position_ts_msg(self, origframe, source, payload, via=None):
@@ -238,6 +275,7 @@ class Handler:
         eg.
         PP5JR-13>APRS,PP5JR-15*,PP5JRS-15*:@092248z2741.47S/04908.88W_098/011g014t057r000p000P000h60b07816.DsVP
         """
+        logger.debug(f"Received Position/TS/Msg packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
 
     def on_aprs_position_msg(self, origframe, source, payload, via=None):
@@ -246,29 +284,35 @@ class Handler:
         eg.
         PY5TJ-12>APBK,PY5CTV-13*,WIDE1*,PP5JRS-15*:=2532.12S/04914.18WkTelemetria: 14.6v 25*C 56% U. Rel
         """
+        logger.debug(f"Received Position/Msg packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
 
     def on_aprs_position_ts(self, origframe, source, payload, via=None):
         """Position with timestamp, no APRS messaging (data type: /)
         """
+        logger.debug(f"Received Position/TS packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
 
     def on_aprs_telemetry(self, origframe, source, payload, via=None):
         """Telemetry packet (data type: T)
         """
+        logger.debug(f"Received Telemetry packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
 
     def on_aprs_mic_e(self, origframe, source, payload, via=None):
         """APRS Mic-E packet, current (data type: `)
         """
+        logger.debug(f"Received Mic-E packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
 
     def on_aprs_old_mic_e(self, origframe, source, payload, via=None):
         """APRS Mic-E packet, old (data type: ')
         """
+        logger.debug(f"Received Old Mic-E packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
 
     def on_aprs_others(self, origframe, source, payload, via=None):
         """All other APRS data types (possibly unknown)
         """
+        logger.debug(f"Received Other packet from {source}: {payload.decode('utf-8', errors='replace')}")
         pass
