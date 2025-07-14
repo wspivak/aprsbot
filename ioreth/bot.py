@@ -11,7 +11,7 @@ import hashlib
 
 # Configure the logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+    level=logging.INFO,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
     format='%(asctime)s - %(levelname)s - %(message)s', # This format string includes the timestamp
     handlers=[
         logging.FileHandler("/opt/aprsbot/logs/replybot.log"), # Log to the specified file
@@ -449,16 +449,6 @@ class BotAprsHandler(aprs.Handler):
                 # as it no longer contains the netname prefix to strip.
                 self._broadcast_message(clean_source, args.strip())
                 command_executed = True
-                self._log_audit(
-                    direction="recv",
-                    source=clean_source,
-                    destination=self.callsign, # Or the specific addressee for the command if different
-                    message=text, # The original message received
-                    msgid=None, # Or the original msgid if available
-                    rejected=False,
-                    note="NETMSG command successfully processed and broadcast initiated.",
-                    transport=None
-                )                
                 return command_executed
     
             # Modified: Removed 'and args.upper() == self.netname.upper()'
@@ -506,17 +496,21 @@ class BotAprsHandler(aprs.Handler):
     
             return command_executed
 
-    def beacon_as_erli(self, text="ERLI tactical alias active"):
-        """Send a status beacon as 'ERLI' so APRS-IS learns the alias."""
+    def beacon_as_botnet(self, text=None): # Renamed method, changed default text to None
+        """Send a status beacon as self.netname so APRS-IS learns the alias."""
+        # If no specific text is provided, use a default that includes netname
+        if text is None:
+            text = f"{self.netname} tactical alias active"
+
         original_callsign = self.callsign
-        self.callsign = "ERLI"
+        self.callsign = self.netname # <--- CRITICAL CHANGE: Use netname from config
         frame = self.make_aprs_status(text)
         for label, client in self.clients.items():
             if client.is_connected():
                 client.enqueue_frame(frame)
-                logger.info(f"Beaconed as ERLI via {label}: {text}")
+                logger.info(f"Beaconed as {self.netname} via {label}: {text}") # Log message updated
 
-        logger.info(f"Beaconed as ERLI: {text}")
+        logger.info(f"Beaconed as {self.netname}: {text}") # Log message updated
         self.callsign = original_callsign
 
     def _broadcast_to_net(self, source, payload):
@@ -540,7 +534,7 @@ class BotAprsHandler(aprs.Handler):
                 logger.info(f"Status frame sent via {label}: {status}")
 
         # Dynamic status message using current bot identity
-        self.send_aprs_msg("APRS", f">ERLI is active here at {self.callsign}.", is_ack=False)
+        self.send_aprs_msg("APRS", f">The Net is active here at {self.callsign}.", is_ack=False)
 
 
     def _broadcast_message(self, source, message):
@@ -647,16 +641,19 @@ class ReplyBot:
 
 
         try:
-            from . import ax25
-            logger.warning("🔧 Injecting test frame: KC2NJV-4>ERLI:ping")
-
-            test_str = "KC2NJV-4>ERLI:ping"
+            from . import ax25 # This import remains as is
+        
+            logger.warning("🔧 Injecting test frame from config")
+        
+            # Get the test string from aprsbot.conf using self.cfg
+            test_str = self.cfg.get("debug", "test_frame_string").strip()
+        
             test_frame = ax25.Frame.from_aprs_string(test_str)
-
+        
             self._aprs_handler.handle_frame(test_frame)
-            
+        
             logger.warning("✅ Test frame passed to handler")
-
+        
         except Exception as e:
             logger.error(f"Test frame injection failed: {e}")
 
@@ -916,18 +913,18 @@ class ReplyBot:
 
 
         now = time.monotonic()
-        if not hasattr(self, "_last_erli_beacon"):
-            self._last_erli_beacon = 0
+        if not hasattr(self, "_last_netname_beacon"):
+            self._last_netname_beacon = 0
         # NEW: Ensure each TNC client processes its input
 
-        if now - self._last_erli_beacon > 900:
-            self._last_erli_beacon = now
+        if now - self._last_netname_beacon > 900:
+            self._last_netname_beacon = now
             beacon_text = self._aprs_handler.beacon_message_template.format(
                 alias=self._aprs_handler.user_defined_beacon_alias,
                 call=self._aprs_handler.callsign
             )
 
-            self._aprs_handler.beacon_as_erli(beacon_text)
+            self._aprs_handler.beacon_as_botnet(beacon_text)
 
         while True:
             rcmd = self._rem.poll_ret()
