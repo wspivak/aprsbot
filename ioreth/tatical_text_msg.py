@@ -14,9 +14,9 @@ from .aprs import Handler
 # --- Configuration ---
 APRS_IS_SERVER = 'rotate.aprs2.net'
 APRS_IS_PORT = 14580
-BOT_ALIAS = 'ERLI'
-LOGIN_CALL = 'KC2NJV-10'
-PASSCODE = '16569' # Ensure this is correct for your callsign KC2NJV
+BOT_ALIAS = '<Fill-in>'
+LOGIN_CALL = '<fill-in>'
+PASSCODE = '<fill-in>' # Ensure this is correct for your callsign KC2NJV
 
 def send_aprs_message(message_text):
     """
