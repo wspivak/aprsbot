@@ -14,9 +14,9 @@ from .aprs import Handler
 # --- Configuration ---
 APRS_IS_SERVER = 'rotate.aprs2.net'
 APRS_IS_PORT = 14580
-BOT_ALIAS = '<Fill-in>'
-LOGIN_CALL = '<fill-in>'
-PASSCODE = '<fill-in>' # Ensure this is correct for your callsign KC2NJV
+BOT_ALIAS = 'ERLI' # This is the intended destination alias for the message
+LOGIN_CALL = 'KC2NJV-10'
+PASSCODE = '16569' # Ensure this is correct for your callsign KC2NJV
 
 def send_aprs_message(message_text):
     """
@@ -27,12 +27,20 @@ def send_aprs_message(message_text):
     # Initialize your Ioreth Handler with the sender's callsign
     aprs_handler = Handler(callsign=LOGIN_CALL)
 
+    # --- CRITICAL FIX: Set the handler's destination to the BOT_ALIAS ---
+    # This overrides the Handler's internal DEFAULT_DESTINATION ("PYBOT1")
+    # so that the APRS packet header is correctly addressed.
+    aprs_handler.destination = BOT_ALIAS 
+    print(f"Handler's packet destination set to: {aprs_handler.destination}")
+
+
     # Append a random message ID as per APRS specification and your bot's expectation
     msg_id = str(random.randint(100, 999))
     message_with_id = f"{message_text}{{{msg_id}}}"
 
     # Use the Handler's make_aprs_msg method to create the AX.25 Frame object.
     # This method internally handles the message formatting and uses ax25.py.
+    # The 'to_call' here is used for the *payload* formatting.
     aprs_frame = aprs_handler.make_aprs_msg(to_call=BOT_ALIAS, text=message_with_id)
 
     # Convert the AX.25 Frame object into the raw APRS-IS string format (bytes).
