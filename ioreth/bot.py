@@ -484,12 +484,12 @@ class BotAprsHandler(aprs.Handler):
                 elif actual_command_to_process == "blacklist_del":
                     self.exec_db("DELETE FROM blacklist WHERE callsign = ?", (args.upper(),))
                     self.send_aprs_msg(clean_source, f"{args.upper()} removed from blacklist.")
-                elif actual_command_to_process == "admin_add":
-                    self.exec_db("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
-                    self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
-                elif actual_command_to_process == "admin_del":
-                    self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
-                    self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
+#                elif actual_command_to_process == "admin_add":
+#                    self.exec_db("INSERT OR IGNORE INTO admins (callsign) VALUES (?)", (args.upper(),))
+#                    self.send_aprs_msg(clean_source, f"{args.upper()} is now an admin.")
+#                elif actual_command_to_process == "admin_del":
+#                    self.exec_db("DELETE FROM admins WHERE callsign = ?", (args.upper(),))
+#                    self.send_aprs_msg(clean_source, f"{args.upper()} removed from admins.")
     
                 command_executed = True
                 return command_executed
