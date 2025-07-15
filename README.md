@@ -53,6 +53,12 @@ Added a script to trim audit_log in SQLite3 db.  Just add a cron job.
 
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
+To create or delete ADMINS, I have commented out those lines in Bot.py.  I suggest you use sqlite3 and use
+a) To Add:
+    "INSERT OR IGNORE INTO admins (callsign) VALUES (?)"
+b) To Delete:
+     "DELETE FROM admins WHERE callsign = ?"
+     
 <b>New/Changed Commands:</b>
 
 <b>NOTE:</b> Commands are not case sensitive (given my radios, that would be insane :) )
@@ -66,6 +72,8 @@ NetMSG [space] [message] <-- to distribute message to list
 NETUSERS  <-- list of users
 
 NETCHECKOUT  <-- to leave the list.
+
+BLACKLIST ADD/BLACKLIST DEL <-- needs Admin Privileges
 
 # Special Thanks to:
 
