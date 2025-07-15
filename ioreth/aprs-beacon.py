@@ -20,11 +20,11 @@ from socket import *
 # APRS-IS login info
 serverHost = 'rotate.aprs2.net'
 serverPort = 14580
-aprsUser = 'KC2NJV-PY'
-aprsPass = '16569'
+aprsUser = 'Kxx'
+aprsPass = 'xxx'
 
 # APRS packet
-callsign = 'ERLI'
+callsign = 'Exxx'
 btext = ''
 
 # create socket & connect to server
