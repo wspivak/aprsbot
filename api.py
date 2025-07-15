@@ -16,7 +16,7 @@ DATABASE = 'erli.db'
 # Utility: Clean/truncate message content (remove NETMSG prefix)
 # -----------------------------
 def trim_aprs_message(message):
-    pattern = r'^(NETMSG)\s+(.*)'
+    pattern = r'^(NETMSG|MSG)\s+(.*)'
     match = re.match(pattern.strip(), message.strip(), re.IGNORECASE)
     return match.group(2).strip() if match else message.strip()
 
@@ -50,7 +50,11 @@ def query_audit_log_deduplicated():
             al.timestamp >= datetime('now', '-7 days')
             AND al.destination NOT LIKE 'BLN%'
             AND al.direction = 'recv'
-            AND (LOWER(al.message) LIKE '%cq%' OR LOWER(al.message) LIKE '%netmsg%')
+            AND (
+                LOWER(al.message) LIKE '%cq%' OR
+                LOWER(al.message) LIKE '%netmsg%' OR
+                LOWER(al.message) LIKE 'msg %'
+            )
             AND eu.callsign IS NOT NULL
             AND bl.callsign IS NULL
         ORDER BY
@@ -81,7 +85,7 @@ def query_audit_log_deduplicated():
         original_message = row_dict['message'].strip()
         lowered = original_message.lower()
     
-        is_netmsg = lowered.startswith("netmsg ")
+        is_netmsg = lowered.startswith("netmsg ") or lowered.startswith("msg ")
         is_cq = "cq" in lowered
     
         # Process NETMSG
