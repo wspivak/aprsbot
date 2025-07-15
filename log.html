@@ -82,7 +82,7 @@ span {
 
             for (const row of data) {
               const tr = document.createElement("tr");
-              const msg = row.message || "";
+              const msg = row.trimmed_message || "";
               const isHighlight = /cq|netmsg erli/i.test(msg);
 
               tr.className = isHighlight ? "highlight" : "";
