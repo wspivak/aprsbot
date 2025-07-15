@@ -108,6 +108,7 @@ E-mail: <kc2njv@sbanetweb.com>
 
 Web: <http://sbanetweb.com:8080>
 
+Special extra thanks to Gemini, Co-Pilot and Perplexity AI's that did ALL the HEAVY, Medium and lite lifting!
 
 Original Author:
 Author: Alexandre Erwin Ittner   (callsign: PP5ITT)
