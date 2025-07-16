@@ -167,7 +167,7 @@ class Handler:
                 source=clean_source,
                 destination=destination,
                 # ✅ preserve MSG / CQ prefix
-                message= message=text.strip(),  
+                message= text.strip(),  
                 msgid=msgid,
                 transport=transport
             )
