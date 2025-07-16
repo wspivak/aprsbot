@@ -56,6 +56,23 @@ def _cleanup_old_entries(current_time, ttl=30):
 def is_br_callsign(callsign):
     return bool(re.match("P[PTUY][0-9].+", callsign.upper()))
 
+# Added for classifying Transport value
+def classify_transport(via):
+    if not via:
+        return None
+    if isinstance(via, str):
+        path_elements = [item.strip().lower() for item in via.split(',')]
+    elif isinstance(via, (list, tuple)):
+        path_elements = [str(item).strip().lower() for item in via]
+    else:
+        return None
+    aprsis_ids = {"tcpip", "qac", "qas", "qar", "qao", "qax"}
+    if any(elem in aprsis_ids or elem.startswith("q") for elem in path_elements):
+        return "APRS-IS"
+    return "RF"
+
+
+
 class BotAprsHandler(aprs.Handler):
     # CORRECTED __init__ METHOD - Combine both previous ones
     def __init__(self, callsign, client, config_file="aprsbot.conf"):
@@ -282,7 +299,7 @@ class BotAprsHandler(aprs.Handler):
                     msgid=msgid,
                     rejected=True,
                     note="Loopback detected and rejected",
-                    transport= None
+                    transport=classify_transport(via) if via else "RF"
                 )
                 return
 
@@ -297,7 +314,7 @@ class BotAprsHandler(aprs.Handler):
                 msgid=msgid,
                 rejected=True,
                 note="Addressee not in aliases",
-                transport=  None
+                transport=classify_transport(via) if via else "RF"
             )
             return
 
@@ -311,7 +328,7 @@ class BotAprsHandler(aprs.Handler):
                 msgid=msgid,
                 rejected=True,
                 note="Blacklisted direct source",
-                transport=  None
+                transport=classify_transport(via) if via else "RF"
             )
             return
 
@@ -334,7 +351,7 @@ class BotAprsHandler(aprs.Handler):
                         msgid=msgid,
                         rejected=True,
                         note="Blacklisted encapsulated source",
-                        transport= None
+                        transport=classify_transport(via) if via else "RF"
                     )
                     return
 
@@ -351,17 +368,18 @@ class BotAprsHandler(aprs.Handler):
             direction="recv",
             source=clean_source,
             destination=upper_addressee,
-            message=cleaned,
+             message=text.strip(),  # ✅ preserve MSG / CQ prefix
             msgid=msgid,
             rejected=False,
             note=f"Received and processed. Command handled: {was_command_handled}",
-            transport=  None
+            transport=classify_transport(via) if via else "RF"
         )
 
-    def handle_aprs_query(self, source, text, origframe):
+    def handle_aprs_query(self, source, text, origframe, via=None):
             logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
             logger.info("Handling query from %s: %s", source, text)
     
+            via = via if via else None
             clean_source = source.replace("*", "")
             text = self.sanitize_text(text).strip()
             qry_args = text.split(" ", 1)
@@ -376,7 +394,7 @@ class BotAprsHandler(aprs.Handler):
             actual_command_to_process = None
             if corrected_qry != qry_lower and corrected_qry in self.KNOWN_COMMANDS.values():
                 logger.info(f"Corrected command from '{qry}' to '{corrected_qry}' for {clean_source}")
-                self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
+#                self.send_aprs_msg(clean_source, f"Interpreting '{qry}' as '{corrected_qry}'")
                 actual_command_to_process = corrected_qry
             elif qry_lower in self.KNOWN_COMMANDS:
                 actual_command_to_process = self.KNOWN_COMMANDS[qry_lower]
@@ -409,7 +427,7 @@ class BotAprsHandler(aprs.Handler):
                 help_msg = "Commands: " + ", ".join(display_commands)
                 self.send_aprs_msg(clean_source, help_msg)
                 command_executed = True
-                        elif actual_command_to_process.lower() == "netusers":
+            elif actual_command_to_process.lower() == "netusers":
                 # Get last 10 users by timestamp
                 cur = self.db.cursor()
                 cur.execute("SELECT callsign FROM users ORDER BY timestamp DESC LIMIT 10")
@@ -420,6 +438,7 @@ class BotAprsHandler(aprs.Handler):
                 else:
                     self.send_aprs_msg(clean_source, "No users found.")
                 command_executed = True
+                
     
             if command_executed:
                 return True
@@ -451,7 +470,7 @@ class BotAprsHandler(aprs.Handler):
                         msgid=None,
                         rejected=True,
                         note="NETMSG attempt by unregistered user",
-                        transport=  None
+                        transport=classify_transport(via) if via else "RF"
                     )
                     self.send_aprs_msg(clean_source, f"You're not registered on {self.netname}. Send 'CQ {self.netname} <msg>' first.")
                     return False
@@ -468,11 +487,7 @@ class BotAprsHandler(aprs.Handler):
                 command_executed = True
                 return command_executed
     
-            # Modified: Removed 'and args.upper() == self.netname.upper()'
-            if actual_command_to_process == "netusers":
-                self._send_user_list(clean_source)
-                command_executed = True
-                return command_executed
+
     
             if actual_command_to_process in ["blacklist_add", "blacklist_del", "admin_add", "admin_del"] and args:
                 if not self.is_admin(clean_source):
@@ -485,7 +500,7 @@ class BotAprsHandler(aprs.Handler):
                         msgid=None,
                         rejected=True,
                         note=f"Unauthorized attempt to '{actual_command_to_process}' by non-admin",
-                        transport=  None
+                        transport=classify_transport(via) if via else "RF"
                     )
                     return False
     
@@ -571,21 +586,26 @@ class BotAprsHandler(aprs.Handler):
 
     def send_aprs_msg(self, to_call, text, is_ack=False):
         frame = self.make_aprs_msg(to_call, text)
+    
         for label, client in self.clients.items():
             if client.is_connected():
                 client.enqueue_frame(frame)
                 logger.info(f"Sent via {label}: {to_call} -> {text}")
                 cache_sent_message(to_call, text)
+    
                 if not is_ack:
+                    transport = "RF" if label.lower() == "rf" else "APRS-IS"
+                    logger.info(f"[AUDIT TEST] Logging outbound APRS message: {self.callsign} -> {to_call} via {transport}")
+
                     self._log_audit(
                         direction="sent",
                         source=self.callsign,
                         destination=to_call,
                         message=text,
                         msgid=None,
-                        transport=  None
+                        transport=transport
                     )
-
+    
 
 class SystemStatusCommand(remotecmd.BaseRemoteCommand):
     def __init__(self, cfg):
