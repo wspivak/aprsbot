@@ -409,6 +409,17 @@ class BotAprsHandler(aprs.Handler):
                 help_msg = "Commands: " + ", ".join(display_commands)
                 self.send_aprs_msg(clean_source, help_msg)
                 command_executed = True
+                        elif actual_command_to_process.lower() == "netusers":
+                # Get last 10 users by timestamp
+                cur = self.db.cursor()
+                cur.execute("SELECT callsign FROM users ORDER BY timestamp DESC LIMIT 10")
+                rows = cur.fetchall()
+                if rows:
+                    user_list = ", ".join(row[0] for row in rows)
+                    self.send_aprs_msg(clean_source, f"Last 10 users: {user_list}")
+                else:
+                    self.send_aprs_msg(clean_source, "No users found.")
+                command_executed = True
     
             if command_executed:
                 return True
