@@ -166,7 +166,8 @@ class Handler:
                 direction="recv",
                 source=clean_source,
                 destination=destination,
-                message= message=text.strip(),  # ✅ preserve MSG / CQ prefix
+                # ✅ preserve MSG / CQ prefix
+                message= message=text.strip(),  
                 msgid=msgid,
                 transport=transport
             )
