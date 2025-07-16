@@ -1,36 +1,64 @@
-#To run:
-# cd /opt/aprsbot/ && /usr/bin/python -m ioreth.tatical_text_msg  "Message"
-#Can be placed in script, crontab or webpage
-
-
 import socket
 import time
+import random
+import sys
 
+from .aprs import Handler 
+
+# --- Configuration ---
 APRS_IS_SERVER = 'rotate.aprs2.net'
 APRS_IS_PORT = 14580
-CALLSIGN = 'xxxx'
-LOGIN_CALL = 'xxxx-x'  # must be real
-PASSCODE = 'xxxxx'  # replace with real passcode from https://apps.magicbug.co.uk/passcode/
+BOT_ALIAS = 'ERLI'  # Destination alias
+LOGIN_CALL = 'KC2NJV-10'
+PASSCODE = '16569'  # Make sure this is your true passcode
 
-BEACON_TEXT = '>xxxxxx'
-POSITION = '!4039.38N/07331.33W-'  # or '!' + your latitude/longitude + symbol
-SYMBOL = '-'  # house, or use other symbols as needed
+def send_aprs_message(message_text):
+    print(f"Attempting to send message: '{message_text}' from {LOGIN_CALL} to {BOT_ALIAS} using Ioreth Handler.")
 
-def connect_and_beacon():
+    aprs_handler = Handler(callsign=LOGIN_CALL)
+    aprs_handler.destination = BOT_ALIAS
+    
+    # === Critical fix: Set path to APRS-IS digipeater path ===
+    aprs_handler.path = "TCPIP,qAR"  # This flags message as APRS-IS originated
+    
+    msg_id = str(random.randint(100, 999))
+    message_with_id = f"{message_text}{{{msg_id}}}"
+
+    aprs_frame = aprs_handler.make_aprs_msg(to_call=BOT_ALIAS, text=message_with_id)
+
+    aprs_message_frame_bytes = aprs_frame.to_aprs_string() + b'\n'
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect((APRS_IS_SERVER, APRS_IS_PORT))
+        try:
+            sock.settimeout(15) 
+            sock.connect((APRS_IS_SERVER, APRS_IS_PORT))
+            print(f"Connected to APRS-IS server: {APRS_IS_SERVER}:{APRS_IS_PORT}")
 
-        login = f'user {LOGIN_CALL} pass {PASSCODE} vers erli-beacon 1.0\n'
-        sock.sendall(login.encode())
+            login = f'user {LOGIN_CALL} pass {PASSCODE} vers aprs-message-sender 1.0\n'
+            sock.sendall(login.encode())
+            print(f"Sent login: {login.strip()}")
 
-        time.sleep(2)
+            time.sleep(3)
 
-        # Build ERLI status frame
-        frame = f"{CALLSIGN}>APRS:{POSITION}{BEACON_TEXT}\n"
-        sock.sendall(frame.encode())
+            sock.sendall(aprs_message_frame_bytes)
+            print(f"Sent APRS Message (via Ioreth Handler): {aprs_message_frame_bytes.decode('utf-8').strip()}")
 
-        print(f"Sent: {frame.strip()}")
-        time.sleep(2)
+            time.sleep(10)
+
+            print("Message send sequence complete. Disconnecting.")
+
+        except ConnectionRefusedError:
+            print(f"ERROR: Connection refused. Ensure APRS-IS server is reachable and port {APRS_IS_PORT} is open.")
+        except socket.timeout:
+            print("ERROR: Connection timed out during connect or send. Network issue or server unresponsive.")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
 
 if __name__ == '__main__':
-    connect_and_beacon()
+    if len(sys.argv) > 1:
+        message_to_send = sys.argv[1]
+        print(f"Using message from command line: {message_to_send}")
+        send_aprs_message(message_to_send)
+    else:
+        print("No message provided as a command-line argument.")
+        print("Usage (from /opt/aprsbot/): python -m ioreth.tatical_text_msg \"YOUR_MESSAGE_HERE\"")

@@ -11,7 +11,7 @@ import hashlib
 
 # Configure the logging
 logging.basicConfig(
-    level=logging.INFO,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+    level=logging.DEBUG,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
     format='%(asctime)s - %(levelname)s - %(message)s', # This format string includes the timestamp
     handlers=[
         logging.FileHandler("/opt/aprsbot/logs/replybot.log"), # Log to the specified file
@@ -671,22 +671,22 @@ class ReplyBot:
         # 🧪 Inject a simulated frame to verify bot handling logic
 
 
-        try:
-            from . import ax25 # This import remains as is
+#        try:
+#            from . import ax25 # This import remains as is
         
-            logger.warning("🔧 Injecting test frame from config")
+#            logger.warning("🔧 Injecting test frame from config")
         
             # Get the test string from aprsbot.conf using self.cfg
-            test_str = self.cfg.get("debug", "test_frame_string").strip()
+#            test_str = self.cfg.get("debug", "test_frame_string").strip()
         
-            test_frame = ax25.Frame.from_aprs_string(test_str)
+#            test_frame = ax25.Frame.from_aprs_string(test_str)
         
-            self._aprs_handler.handle_frame(test_frame)
+#            self._aprs_handler.handle_frame(test_frame)
         
-            logger.warning("✅ Test frame passed to handler")
+#            logger.warning("✅ Test frame passed to handler")
         
-        except Exception as e:
-            logger.error(f"Test frame injection failed: {e}")
+#        except Exception as e:
+#            logger.error(f"Test frame injection failed: {e}")
 
 
 
@@ -734,7 +734,8 @@ class ReplyBot:
 
             aprsis_client.filter = filter_str  # ✅ Adds filter property
 
-            aprsis_client.on_recv_frame = self._aprs_handler.handle_frame
+            aprsis_client.on_recv_frame = lambda frame: self._aprs_handler.handle_frame(frame, from_aprsis=True)
+
             self.clients["aprsis"] = aprsis_client
         logger.info("Loaded both RF and APRS-IS interfaces")
 
