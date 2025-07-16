@@ -79,6 +79,10 @@ BLACKLIST ADD/BLACKLIST DEL <-- needs Admin Privileges
 
 Ben Jackson, N1WBV for his assistance!!!!
 
+# ToDo List:
+
+1. Log the Via method to the audit_log.
+
 # License (from the original)
 
 Copyright (C) 2020  Alexandre Erwin Ittner, PP5ITT <alexandre@ittner.com.br>
