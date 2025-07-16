@@ -1,107 +1,219 @@
-<html>
+<!--- Examine and fill in to liking, change colors, etc. --->
+
+<!DOCTYPE html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <title>APRS Net Log</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #fff;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 20px auto;
+    }
+
+    th, td {
+      border: 1px solid black;
+      padding: 8px;
+      text-align: center;
+    }
+
+    th {
+      background-color: maroon;
+      color: white;
+    }
+
+    /* Zebra stripe logic handled by nth-child */
+    tr:nth-child(even):not(.highlight) {
+      background-color: #f2f2f2;
+    }
+
+    tr:nth-child(odd):not(.highlight) {
+      background-color: #ffffff;
+    }
+
+    /* Highlighted messages */
+    tr.highlight {
+      background-color: #fffad1 !important; /* Soft yellow */
+      font-weight: bold;
+    }
+
+    a:link {
+      color: #0000EE;
+      text-decoration: none;
+    }
+
+    a:hover {
+      background-color: maroon;
+      color: white;
+    }
+
+    h1, h2, h3 {
+      color: white;
+    }
+
+    .header {
+      text-align: center;
+      background-color: maroon;
+      color: white;
+      padding: 10px;
+    }
+
+    .center-title {
+      text-align: center;
+      margin-top: 20px;
+    }
+
+    #pagination {
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    button {
+      padding: 6px 12px;
+      margin: 4px;
+      font-size: 14px;
+    }
+  </style>
 </head>
 <body>
 
-<style>
-td {
-	border: 1px solid black;
-	text-align: center;
-} 
-.blurb {
-	display: block;
-	text-align: left !important;
-}
+  <!-- Page Header -->
+  <div class="header">
+<!--- FILL IN --->
+  </div>
 
-.blurb td {
-    border: 1px solid black;
-    text-align: left !important; /* Override centering */
-    padding-left: 10px; /* Adds slight indentation */
-    width: 100%;
-    display: table-cell;
-}
+  <!-- Back to Home Link -->
+  <div style="text-align: center; margin-top: 10px;">
+    <a href="<!--- FILL IN --->"><b>← Back to Home</b></a>
+  </div>
 
-th {
-	border: 1px solid black;
-	color: white;
-	background-color: maroon;
-}
-table {
-	border-collapse: collapse;
-}
-tr:nth-child(even) {
-	background-color: #f2f2f2;
-}
+  <!-- Title Section -->
+  <div class="center-title">
+    <h1><font color="black">APRS NET Log</font></h1>
+    <p>Showing messages from the last 7 days</p>
+  </div>
+
+  <!-- Log Table -->
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Source</th>
+        <th>Transport</th>
+        <th>Message</th>
+      </tr>
+    </thead>
+    <tbody id="log-body">
+      <tr><td colspan="4">Loading logs...</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Pagination Controls -->
+  <div id="pagination">
+    <button id="prevBtn">⬅️ Prev</button>
+    <span id="pageInfo">Page 1</span>
+    <button id="nextBtn">Next ➡️</button>
+  </div>
+
+  <p style="text-align: center;">
+    <i>Data is retained for 7 days</i><br>
+    System maintained by <a href="mailto:<!--- FILL IN --->"></a>
+  </p>
+
+<!-- JS to Fetch and Render Logs -->
+<script>
+  const API_URL = 'fill in';
+  const ROWS_PER_PAGE = 20;
+
+  let data = [];
+  let currentPage = 1;
+
+  const tbody = document.getElementById("log-body");
+  const pageInfo = document.getElementById("pageInfo");
+  const prevBtn = document.getElementById("prevBtn");
+  const nextBtn = document.getElementById("nextBtn");
+
+  // Escape HTML special characters
+  const escapeHtml = str => String(str).replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+
+  // Fetch from API & populate table
+  fetch(API_URL)
+    .then(res => {
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res.json();
+    })
+    .then(logs => {
+      data = Array.isArray(logs) ? logs : [];
+      if (data.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='4'>No matching log entries found.</td></tr>";
+        return;
+      }
+      currentPage = 1;
+      renderPage(currentPage);
+    })
+    .catch(err => {
+      tbody.innerHTML = `<tr><td colspan="4">Error: ${escapeHtml(err.message)}</td></tr>`;
+      console.error("Failed to load logs:", err);
+    });
+
+  function renderPage(page) {
+    tbody.innerHTML = "";
+    const start = (page - 1) * ROWS_PER_PAGE;
+    const end = start + ROWS_PER_PAGE;
+    const pageData = data.slice(start, end);
+
+    if (pageData.length === 0) {
+      tbody.innerHTML = "<tr><td colspan='4'>No log entries on this page.</td></tr>";
+      return;
+    }
+
+    for (const row of pageData) {
+      const tr = document.createElement("tr");
+      const msg = escapeHtml(row.trimmed_message || "");
+      const transport = escapeHtml(row.transport || "?");
+      const isHighlight = /^cq\s/i.test(msg);  // "\b" means word boundary
 
 
+      if (isHighlight) tr.classList.add("highlight");
 
-a:hover {
-	background-color: maroon;
-	color: white;
-}
+      tr.innerHTML = `
+        <td>${escapeHtml(row.timestamp)}</td>
+        <td>${escapeHtml(row.source)}</td>
+        <td>${transport}</td>
+        <td>${msg}</td>
+      `;
+      tbody.appendChild(tr);
+    }
 
-a:link {
-	color: #0000EE;
-  	text-decoration: none;
-}
+    const totalPages = Math.ceil(data.length / ROWS_PER_PAGE);
+    pageInfo.textContent = `Page ${page} of ${totalPages}`;
+    prevBtn.disabled = page === 1;
+    nextBtn.disabled = page === totalPages;
+  }
 
-span {
-    background-color: #D3D3D3 !important;
-}
-</style>
-<body>
-        <table width="100%">
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Source</th>
-            <th>Destination</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody id="log-body">
-          <tr><td colspan="4">Loading logs...</td></tr>
-        </tbody>
-      </table>
+  prevBtn.addEventListener("click", () => {
+    if (currentPage > 1) {
+      currentPage--;
+      renderPage(currentPage);
+    }
+  });
 
-      <script>
-        const API_URL = 'http://sbanetweb.com:8081/logs';
+  nextBtn.addEventListener("click", () => {
+    const totalPages = Math.ceil(data.length / ROWS_PER_PAGE);
+    if (currentPage < totalPages) {
+      currentPage++;
+      renderPage(currentPage);
+    }
+  });
+</script>
 
-        fetch(API_URL)
-          .then(res => {
-            if (!res.ok) throw new Error(`API error: ${res.status}`);
-            return res.json();
-          })
-          .then(data => {
-            const tbody = document.getElementById("log-body");
-            tbody.innerHTML = "";
-            if (data.length === 0) {
-              tbody.innerHTML = "<tr><td colspan='4'>No matching log entries found.</td></tr>";
-              return;
-            }
-
-            for (const row of data) {
-              const tr = document.createElement("tr");
-              const msg = row.trimmed_message || "";
-              const isHighlight = /cq|netmsg erli/i.test(msg);
-
-              tr.className = isHighlight ? "highlight" : "";
-              tr.innerHTML = `
-                <td>${row.timestamp}</td>
-                <td>${row.source}</td>
-                <td>${row.destination}</td>
-                <td>${msg}</td>
-              `;
-              tbody.appendChild(tr);
-            }
-          })
-          .catch(err => {
-            document.getElementById("log-body").innerHTML = `<tr><td colspan="4">Error: ${err.message}</td></tr>`;
-            console.error("Failed to load logs:", err);
-          });
-      </script>
-    </td>
-  </tr>
-</table>
-  /body>
+</body>
 </html>
