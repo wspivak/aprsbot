@@ -48,7 +48,8 @@ def is_loopback(to_call, message):
         _cleanup_old_entries(now)
         return any((t == to_call and m == message) for _, t, m in recent_messages)
 
-def _cleanup_old_entries(current_time, ttl=30):
+#Changed from 30 seconds to 300 seconds (5min)
+def _cleanup_old_entries(current_time, ttl=300):
     while recent_messages and (current_time - recent_messages[0][0]) > ttl:
         recent_messages.popleft()
 
