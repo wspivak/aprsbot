@@ -10,6 +10,22 @@ logger = logging.getLogger(__name__)
 
 from . import ax25
 
+from collections import deque
+
+RECENT_MSG_CACHE = deque(maxlen=400)
+
+def is_duplicate(source, dest, text, msgid):
+    key = (
+#        str(source).strip().lower(),
+        str(dest).strip().lower(),
+        str(text).strip().lower()
+    )
+    logger.debug(f"[DEDUP-TRACE] Checking key: {key}")
+    if key in RECENT_MSG_CACHE:
+        return True
+    RECENT_MSG_CACHE.append(key)
+    return False
+
 
 def classify_transport(via):
     """
@@ -221,6 +237,11 @@ class Handler:
         clean_source = source.replace("*", "").strip()
         destination = addressee.upper().strip()
         cleaned_text = text.strip()
+        
+            # 🟢 DE-DUPLICATION HERE
+        if is_duplicate(clean_source, destination, cleaned_text, msgid):
+            logger.info(f"[DEDUP] Duplicate message {msgid} from {clean_source} to {destination}, skipping.")
+            return
         transport = classify_transport(via) if via else "RF"
 
         via_str = ','.join(via) if isinstance(via, list) else (via or "None")
