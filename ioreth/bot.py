@@ -8,6 +8,8 @@ import random
 import sqlite3
 import difflib
 import hashlib  
+import sqlite3
+import time
 
 # Configure the logging
 logging.basicConfig(
@@ -30,28 +32,48 @@ from . import remotecmd
 from . import utils
 
 from collections import deque
-import threading
 
-# Global cache for recently sent messages to prevent processing echoes
-recent_messages = deque()
-recent_lock = threading.Lock()
+DEDUP_TTL = 3600  # 60 minutes
 
-def cache_sent_message(to_call, message):
-    now = time.monotonic()
-    with recent_lock:
-        recent_messages.append((now, to_call, message))
-        _cleanup_old_entries(now)
+# ---- Persistent Deduplication with SQLite ----
+
+DEDUP_DB = '/opt/aprsbot/audit_log.db'
+conn = sqlite3.connect(DEDUP_DB, isolation_level=None, check_same_thread=False)
+# isolation_level=None will autocommit transactions (no explicit commit needed).
+
+# Create the dedup table if it doesn't exist
+conn.execute("""
+CREATE TABLE IF NOT EXISTS dedup_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT,
+    destination TEXT,
+    text TEXT,
+    msg_time INTEGER
+)
+""")
+
+def is_duplicate_sqlite(conn, source, dest, text):
+    now = int(time.time())
+    key = (str(source).strip().lower(), str(dest).strip().lower(), str(text).strip().lower())
+    conn.execute("DELETE FROM dedup_cache WHERE ? - msg_time > ?", (now, DEDUP_TTL))
+    cur = conn.execute(
+        "SELECT 1 FROM dedup_cache WHERE source=? AND destination=? AND text=?",
+        key
+    )
+    if cur.fetchone():
+        logger.debug(f"[DEDUP-TRACE] Duplicate hit, key={key}")
+        return True
+    conn.execute(
+        "INSERT INTO dedup_cache (source, destination, text, msg_time) VALUES (?, ?, ?, ?)",
+        (*key, now)
+    )
+    logger.debug(f"[DEDUP-TRACE] New dedup key inserted: {key}")
+    return False
+
 
 def is_loopback(to_call, message):
-    now = time.monotonic()
-    with recent_lock:
-        _cleanup_old_entries(now)
-        return any((t == to_call and m == message) for _, t, m in recent_messages)
-
-#Changed from 30 seconds to 300 seconds (5min)
-def _cleanup_old_entries(current_time, ttl=300):
-    while recent_messages and (current_time - recent_messages[0][0]) > ttl:
-        recent_messages.popleft()
+    # No longer needed—with SQLite-backed deduplication and message audit, true loopback detection is handled elsewhere.
+    return False
 
 
 def is_br_callsign(callsign):
@@ -271,111 +293,122 @@ class BotAprsHandler(aprs.Handler):
         return None
 
     def on_aprs_message(self, source, addressee, text, origframe, msgid=None, via=None):
-        logger.info("Processing APRS message: from=%s to=%s text=%s msgid=%s via=%s",
-                      source, addressee, text, msgid, via)
-        logger.warning(f"APRS MSG RECEIVED: from={source} to={addressee} via={via} text={text}")
-        logger.warning("🔥 handle_frame() was triggered — frame inbound")
-
-        cleaned = self.sanitize_text(text)
-
-        if cleaned == "rej0":
-            logger.debug("Ignoring 'rej0' control message.")
+        """
+        Handler for inbound APRS messages (data type ':'), with full dedupe, blacklist,
+        alias, and loopback logic. Only processes unique, allowed messages for this bot instance.
+        """
+        # Normalize and prepare dedup key
+        clean_source_l = str(source).replace("*", "").strip().lower()
+        addressee_u = str(addressee).strip().upper()
+        cleaned_text_l = str(text).strip().lower()
+    
+        # --- De-duplication ---
+        if is_duplicate_sqlite(conn, clean_source_l, addressee_u.lower(), cleaned_text_l):
+            logger.info(f"[DEDUP] Duplicate suppressed: {clean_source_l}->{addressee_u}: '{cleaned_text_l}'")
             return
-
-        logger.info(f"Sanitized text: '{cleaned}'")
-
-        clean_source = source.replace("*", "")
-        upper_addressee = addressee.strip().upper()
-
+    
+        logger.debug(f"[DEDUP-TRACE] Checking key: ({clean_source_l}, {addressee_u.lower()}, {cleaned_text_l})")
+        logger.info(f"Sanitized text: '{cleaned_text_l}'")
+    
+        # Prepare for logging/audit (preserving CQ, MSG, etc.)
+        audit_source = source.replace("*", "").strip()
+        audit_addressee = addressee_u
+        audit_message = text.strip()
+    
+        # --- Loopback Protection ---
         if is_loopback(source, text):
-            if upper_addressee in self.aliases:
-                logger.debug(f"Allowing looped-back message to alias {upper_addressee}")
+            if addressee_u in self.aliases:
+                logger.debug(f"Allowing looped-back message to alias {addressee_u}")
+                # Proceed—may want to skip or allow depending on net rules
             else:
-                logger.warning(f"Ignoring loopback message from {source} to {addressee}: {text}")
+                logger.warning(f"Ignoring loopback message from {source} to {addressee_u}: {text}")
                 self._log_audit(
                     direction="recv",
-                    source=source,
-                    destination=addressee,
-                    message=text,
+                    source=audit_source,
+                    destination=audit_addressee,
+                    message=audit_message,
                     msgid=msgid,
                     rejected=True,
                     note="Loopback detected and rejected",
                     transport=classify_transport(via) if via else "RF"
                 )
                 return
-
-        logger.info(f"Checking if addressee '{upper_addressee}' is in aliases: {self.aliases}")
-        if upper_addressee not in self.aliases:
-            logger.warning(f"Ignoring message to {upper_addressee} — not in aliases.")
+    
+        # --- Alias Filtering ---
+        logger.info(f"Checking if addressee '{addressee_u}' is in aliases: {self.aliases}")
+        if addressee_u not in self.aliases:
+            logger.warning(f"Ignoring message to {addressee_u} — not in aliases.")
             self._log_audit(
                 direction="recv",
-                source=clean_source,
-                destination=upper_addressee,
-                message=cleaned,
+                source=audit_source,
+                destination=audit_addressee,
+                message=audit_message,
                 msgid=msgid,
                 rejected=True,
                 note="Addressee not in aliases",
                 transport=classify_transport(via) if via else "RF"
             )
             return
-
-        if self.is_blacklisted(clean_source):
-            logger.info(f"Ignoring message from blacklisted callsign: {clean_source}")
+    
+        # --- Blacklist Filtering (direct source) ---
+        if self.is_blacklisted(clean_source_l):
+            logger.info(f"Ignoring message from blacklisted callsign: {clean_source_l}")
             self._log_audit(
                 direction="recv",
-                source=clean_source,
-                destination=upper_addressee,
-                message=cleaned,
+                source=audit_source,
+                destination=audit_addressee,
+                message=audit_message,
                 msgid=msgid,
                 rejected=True,
                 note="Blacklisted direct source",
                 transport=classify_transport(via) if via else "RF"
             )
             return
-
+    
+        # --- Blacklist Filtering (encapsulated/3rd-party source) ---
         if "}" in text:
             try:
                 payload = text.split("}", 1)[1]
                 if ">" in payload and ":" in payload:
-                    inner_src, rest = payload.split(">", 1)
-                    inner_path = rest.split(":", 1)[0]
+                    encaps_src, rest = payload.split(">", 1)
+                    if self.is_blacklisted(encaps_src.strip().lower()):
+                        logger.info(f"Ignoring encapsulated message from blacklisted callsign: {encaps_src}")
+                        self._log_audit(
+                            direction="recv",
+                            source=encaps_src.strip(),
+                            destination=audit_addressee,
+                            message=audit_message,
+                            msgid=msgid,
+                            rejected=True,
+                            note="Blacklisted encapsulated source",
+                            transport=classify_transport(via) if via else "RF"
+                        )
+                        return
                 else:
                     raise ValueError("Encapsulated frame missing delimiter")
-
-                if self.is_blacklisted(inner_src):
-                    logger.info(f"Ignoring encapsulated message from blacklisted callsign: {inner_src}")
-                    self._log_audit(
-                        direction="recv",
-                        source=inner_src,
-                        destination=upper_addressee,
-                        message=cleaned,
-                        msgid=msgid,
-                        rejected=True,
-                        note="Blacklisted encapsulated source",
-                        transport=classify_transport(via) if via else "RF"
-                    )
-                    return
-
             except Exception as e:
-                logger.warning("Could not parse encapsulated frame: %s", e)
-
-        was_command_handled = self.handle_aprs_query(clean_source, cleaned, origframe=origframe)
-
+                logger.warning(f"Could not parse encapsulated frame: {e}")
+    
+        # --- Main message/command processing ---
+        was_command_handled = self.handle_aprs_query(audit_source, audit_message, origframe=origframe)
+    
+        # --- Acknowledge if msgid present and not a dedup ---
         if msgid:
-            logger.info(f"Sending ack to message {msgid} from {clean_source}")
-            self.send_aprs_msg(clean_source, f"ack{msgid}", is_ack=True)
-
+            logger.info(f"Sending ack to message {msgid} from {audit_source}")
+            self.send_aprs_msg(audit_source, f"ack{msgid}", is_ack=True)
+    
+        # --- Final audit logging ---
         self._log_audit(
             direction="recv",
-            source=clean_source,
-            destination=upper_addressee,
-             message=text.strip(),  # ✅ preserve MSG / CQ prefix
+            source=audit_source,
+            destination=audit_addressee,
+            message=audit_message,  # Preserved with prefixes/punctuation intact
             msgid=msgid,
             rejected=False,
             note=f"Received and processed. Command handled: {was_command_handled}",
             transport=classify_transport(via) if via else "RF"
         )
-
+    
     def handle_aprs_query(self, source, text, origframe, via=None):
             logger.info(f"handle_aprs_query called with text: '{text}' from {source}")
             logger.info("Handling query from %s: %s", source, text)
@@ -592,7 +625,7 @@ class BotAprsHandler(aprs.Handler):
             if client.is_connected():
                 client.enqueue_frame(frame)
                 logger.info(f"Sent via {label}: {to_call} -> {text}")
-                cache_sent_message(to_call, text)
+             
     
                 if not is_ack:
                     transport = "RF" if label.lower() == "rf" else "APRS-IS"
@@ -669,28 +702,6 @@ class ReplyBot:
             except Exception as e:
                 logger.error(f"{label} client failed to connect: {e}")
 
-        # 🧪 Inject a simulated frame to verify bot handling logic
-
-
-#        try:
-#            from . import ax25 # This import remains as is
-        
-#            logger.warning("🔧 Injecting test frame from config")
-        
-            # Get the test string from aprsbot.conf using self.cfg
-#            test_str = self.cfg.get("debug", "test_frame_string").strip()
-        
-#            test_frame = ax25.Frame.from_aprs_string(test_str)
-        
-#            self._aprs_handler.handle_frame(test_frame)
-        
-#            logger.warning("✅ Test frame passed to handler")
-        
-#        except Exception as e:
-#            logger.error(f"Test frame injection failed: {e}")
-
-
-
         self._last_blns = time.monotonic()
         self._last_cron_blns = 0
         self._last_status = time.monotonic()
@@ -702,20 +713,20 @@ class ReplyBot:
 
 
     def _load_config(self):
-        
 
-        # Load RF TNC
+        # Load RF TNC configuration and initialize client
         if self._cfg.has_section("tnc_rf"):
             rf_addr = self._cfg["tnc_rf"]["addr"]
             rf_port = int(self._cfg["tnc_rf"]["port"])
             rf_callsign = self._cfg["aprs"].get("callsign", "RF").strip()
 
             rf_client = RfKissClient(addr=rf_addr, port=rf_port)
-            rf_client.callsign = rf_callsign  # ✅ Assign real callsign
-            rf_client.on_recv_frame = self._aprs_handler.handle_frame
+            rf_client.callsign = rf_callsign
+
+            # RF frames: explicitly indicate these are from RF
+            rf_client.on_recv_frame = lambda frame: self._aprs_handler.handle_frame(frame, from_aprsis=False)
+
             self.clients["rf"] = rf_client
-
-
 
         # Load APRS-IS TNC
         if self._cfg.has_section("tnc_aprsis"):
@@ -730,16 +741,17 @@ class ReplyBot:
                 port=is_port,
                 callsign=callsign,
                 passcode=passcode,
-                aprs_filter=filter_str  # ✅ pass the filter early
-)
+                aprs_filter=filter_str
+            )
 
-            aprsis_client.filter = filter_str  # ✅ Adds filter property
+            aprsis_client.filter = filter_str
 
+            # APRS-IS frames: explicitly indicate these are from APRS-IS
             aprsis_client.on_recv_frame = lambda frame: self._aprs_handler.handle_frame(frame, from_aprsis=True)
 
             self.clients["aprsis"] = aprsis_client
-        logger.info("Loaded both RF and APRS-IS interfaces")
 
+        logger.info("Loaded both RF and APRS-IS interfaces")
 
     def _check_updated_config(self):
         try:
@@ -797,14 +809,15 @@ class ReplyBot:
     def on_recv_frame(self, frame):
         logger.debug("Received frame object: %s", frame)
         logger.warning("🔥 handle_frame() was triggered — frame inbound")
-
         try:
             frame_str = frame.to_aprs_string().decode(errors="replace")
             logger.warning("RECV FRAME: %s", frame_str)
         except Exception as e:
             logger.warning("RECV FRAME (could not decode): %s", e)
+    
+        # The critical fix: set from_aprsis to True for APRS-IS socket input
+        self._aprs_handler.handle_frame(frame, from_aprsis=True)
 
-        self._aprs_handler.handle_frame(frame)
 
 
 
