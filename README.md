@@ -51,6 +51,8 @@ Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to fin
 
 Added a script to trim audit_log in SQLite3 db.  Just add a cron job.
 
+Added a db to keep deduplication persistent over bot reboots.  Time frame "DEDUP_TTL = 3600  # 60 minutes" is in Bot.py row 36.  It seems AndroidAPRS app doesn't accept ACK's properly, and it sends 7 retries, stopping just under 60 minutes total time.
+
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
 To create or delete ADMINS, I have commented out those lines in Bot.py.  I suggest you use sqlite3 and use
@@ -81,7 +83,7 @@ Ben Jackson, N1WBV for his assistance!!!!
 
 # ToDo List:
 
-
+Add a Store and Forward sub-system, with a 3-day window.  
 
 # License (from the original)
 
