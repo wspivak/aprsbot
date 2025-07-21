@@ -16,27 +16,54 @@ you will be, effectively, operating remote transmitters through the Internet.
 
 # Updates to original (by Wayne Spivak, KC2NJV)
 
-<b>MAJOR NOTE:</b>  I strongly suggest you put eveything in /opt/aprsbot.  I don't think there is anything hard-coded in Bot.py (some fallbacks), everything is in aprsbot.conf.  
+<b>MAJOR NOTE:</b>  I strongly suggest you put eveything in /opt/aprsbot.  I don't think there is anything hard-coded in Bot.py (some fallbacks), everything is in aprsbot.conf.  The major script is in BOT.PY, however you woon't see it in the distribution.  Instead I will have two optional BOT.PY.  Bot-sf.py hass a Store and Forward sub-system.  Bot-norm.py is upgraded IORETH APRS Bot.
 
 <b>Files that need configuration:</b>
+
 aprsbot.conf
+
 log.html (make it to your liking, maybe as a php file..)
+
 relaybot.service
 
 
-<b>Installation:</b> Copy to a directory du jour (suggest /opt/aprsbot), configure and enjoy.
+<b>Installation:</b> Copy to a directory du jour (suggest /opt/aprsbot), configure APRSBOT.conf, copy either bot-sf.py or bot-normal.py to bot.py and enjoy.
+
+add/modify replybot.service to autostart bot
+
+add/modify aprsapi.service to autostart logging server for webpage
+
+add the following cron jobs 
+
+     #send beacon
+     
+     */5 * * * * /usr/bin/python /opt/aprsbot/ioreth/tatical_beacon.py  >/dev/null 2>&1
+     
+     #Trim audit_log
+     
+     0 3 * * * /usr/bin/python3 /opt/aprsbot/trim_audit_logs.py
+     
+     <i>For Store and Forward sub-system</i>
+     
+     #clean up store and forward db
+     
+     0 3 * * * /opt/aprsbot/venv/bin/python /opt/aprsbot/ioreth/sf_cleanup.py >> /opt/aprsbot/logs/sf_cleanup.log
+     
+     #Automate Store and Forward Delivery
+     
+     */5 * * * * /opt/aprsbot/venv/bin/python /opt/aprsbot/ioreth/sf_pending_forward.py >> /opt/aprsbot/logs/sf_forward.log 2>&1
 
 <b>Changes:</b>
 
 Logger provides timestamps
 
-SQLite3 database for users, blacklisted callsigns and admins (with timestamps)
+SQLite3 databases for users, blacklisted callsigns and admins (with timestamps), audit_log and store_forward
 
 Blacklist limited to Admins
 
 Public logging via the DB, based on the full audit trail.  Logging handled by gunicorn, a service is supplied (check paths). Api.py and basic HTML page supplied.  You should use nginx for the proxy between log.php and api.py.
 
-Added code to prevent loopback from sent messages
+Added code to prevent loopback (deduplication) from sent messages
 
 Anyone sending HELP to an alias for the list will recieve a response, unless they are blacklisted.
 
@@ -46,12 +73,16 @@ Callsign, Callsign Alias, List Names, DB name.
 Configurable Beacon text
 Configurable Known Commands
 Configurable NetCheckOut stanza
+Configurable Store-Forward
 
 Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tactical callsign (add a cronjob @15min intervals).
 
 Added a script to trim audit_log in SQLite3 db.  Just add a cron job.
 
 Added a db to keep deduplication persistent over bot reboots.  Time frame "DEDUP_TTL = 3600  # 60 minutes" is in Bot.py row 36.  It seems AndroidAPRS app doesn't accept ACK's properly, and it sends 7 retries, stopping just under 60 minutes total time.
+1. <fill-in>.db maintains users, admins, blacklist and daily audit log
+2. audit_log.db maintains dedup_cache
+3. store_forward.db maintains SF data
 
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
