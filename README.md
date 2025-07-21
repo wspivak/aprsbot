@@ -74,6 +74,7 @@ Configurable Beacon text
 Configurable Known Commands
 Configurable NetCheckOut stanza
 Configurable Store-Forward
+Note: SF bot creates a dynamic filter: filter p/<ALIAS>/<user1>/<user2>/<...> t/pms,t/m
 
 Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tactical callsign (add a cronjob @15min intervals).
 
@@ -114,8 +115,6 @@ Ben Jackson, N1WBV for his assistance!!!!
 
 # ToDo List:
 
-
-Add a Store and Forward sub-system, with a 3-day window.  
 
 
 # License (from the original)
