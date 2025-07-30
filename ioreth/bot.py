@@ -258,7 +258,7 @@ class BotAprsHandler(aprs.Handler):
         try:
             cur = self.db.cursor()
             cur.execute("""
-                INSERT INTO dedup (direction, source, destination, message, msgid, rejected, note, transport)
+                INSERT INTO audit_log (direction, source, destination, message, msgid, rejected, note, transport)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (direction, source, destination, message, msgid, int(rejected), note, transport))
             self.db.commit()
