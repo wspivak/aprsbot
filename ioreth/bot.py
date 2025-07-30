@@ -13,7 +13,7 @@ import time
 
 # Configure the logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+    level=logging.INFO,  # Set the minimum logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
     format='%(asctime)s - %(levelname)s - %(message)s', # This format string includes the timestamp
     handlers=[
         logging.FileHandler("/opt/aprsbot/logs/replybot.log"), # Log to the specified file
@@ -37,7 +37,7 @@ DEDUP_TTL = 3600  # 60 minutes
 
 # ---- Persistent Deduplication with SQLite ----
 
-DEDUP_DB = '/opt/aprsbot/audit_log.db'
+DEDUP_DB = '/opt/aprsbot/dedup.db'
 conn = sqlite3.connect(DEDUP_DB, isolation_level=None, check_same_thread=False)
 # isolation_level=None will autocommit transactions (no explicit commit needed).
 
@@ -203,7 +203,7 @@ class BotAprsHandler(aprs.Handler):
             )
         """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS audit_log (
+            CREATE TABLE IF NOT EXISTS dedup (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 direction TEXT,
@@ -218,13 +218,13 @@ class BotAprsHandler(aprs.Handler):
         """)
 
         # --- Add Indexes (New Section) ---
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log (timestamp);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_source ON audit_log (source);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_destination ON audit_log (destination);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_message ON audit_log (message);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_timestamp ON dedup (timestamp);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_source ON dedup (source);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_destination ON dedup (destination);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_message ON dedup (message);")
 
         cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_audit_log_group_by_order_by ON audit_log (
+            CREATE INDEX IF NOT EXISTS idx_dedup_group_by_order_by ON dedup (
                 direction,
                 source,
                 destination,
@@ -258,7 +258,7 @@ class BotAprsHandler(aprs.Handler):
         try:
             cur = self.db.cursor()
             cur.execute("""
-                INSERT INTO audit_log (direction, source, destination, message, msgid, rejected, note, transport)
+                INSERT INTO dedup (direction, source, destination, message, msgid, rejected, note, transport)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (direction, source, destination, message, msgid, int(rejected), note, transport))
             self.db.commit()
@@ -436,7 +436,7 @@ class BotAprsHandler(aprs.Handler):
                 if is_br_callsign(clean_source):
                     self.send_aprs_msg(clean_source, "Sou um bot. Envie 'help' para a lista de comandos")
                 else:
-                    self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list")
+                    self.send_aprs_msg(clean_source, "I'm a bot. Send 'help' for command list or see http://sbanetweb.com:8080")
                 return False
     
             if actual_command_to_process == "ping":
@@ -597,13 +597,35 @@ class BotAprsHandler(aprs.Handler):
         self.send_aprs_msg("APRS", f">The Net is active here at {self.callsign}.", is_ack=False)
 
 
+#    def _broadcast_message(self, source, message):
+#        cur = self.db.cursor()
+#        cur.execute("SELECT callsign FROM users")
+#        for callsign, in cur.fetchall():
+#            self.send_aprs_msg(callsign, message, is_ack=False)
+#            logging.info(f"Broadcast from {source} to {callsign}: {message}")
+
     def _broadcast_message(self, source, message):
+        # Check if sender is registered
         cur = self.db.cursor()
+        cur.execute("SELECT 1 FROM users WHERE callsign = ?", (source,))
+        is_registered = cur.fetchone()
+    
+        # Strip leading "MSG" or "NETMSG" if present
+        stripped_msg = re.sub(r"^(NETMSG|MSG)\s*", "", message.strip(), flags=re.IGNORECASE)
+    
+        # Prepend sender if they are registered
+        if is_registered:
+            final_msg = f"<{source}> {stripped_msg}"
+        else:
+            final_msg = stripped_msg
+    
+        # Broadcast to all users
         cur.execute("SELECT callsign FROM users")
         for callsign, in cur.fetchall():
-            self.send_aprs_msg(callsign, message, is_ack=False)
-            logging.info(f"Broadcast from {source} to {callsign}: {message}")
-
+            self.send_aprs_msg(callsign, final_msg, is_ack=False)
+            logging.info(f"Broadcast from {source} to {callsign}: {final_msg}")
+    
+    
     def _remove_user(self, source):
         self.db.cursor().execute("DELETE FROM users WHERE callsign = ?", (source,))
         self.db.commit()
