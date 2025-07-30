@@ -2,63 +2,107 @@ import socket
 import time
 import random
 import sys
+import os
 
-from .aprs import Handler 
+#################### Silence all Output if launched from ATD ####################
+# Force silence: redirect stdout and stderr to /dev/null
+# This prevents ATD from sending "Output from job" emails
+sys.stdout = open(os.devnull, 'w')
+sys.stderr = open(os.devnull, 'w')
+#################### End of Silence all Output from ATD ####################
+
+#########################################################################
+Change the info on last 4 lines of code
+#########################################################################
+
+
+from .aprs import Handler  # adjust if not using as package
 
 # --- Configuration ---
 APRS_IS_SERVER = 'rotate.aprs2.net'
 APRS_IS_PORT = 14580
-BOT_ALIAS = 'ERLI'  # Destination alias
-LOGIN_CALL = 'KC2NJV-10'
-PASSCODE = '16569'  # Make sure this is your true passcode
+BOT_ALIAS = 'Alias'  # Default destination alias
+LOGIN_CALL = 'Real Callsing'
+PASSCODE = '12345'  # Replace with your actual passcode
 
-def send_aprs_message(message_text):
-    print(f"Attempting to send message: '{message_text}' from {LOGIN_CALL} to {BOT_ALIAS} using Ioreth Handler.")
+def send_aprs_message(message_text, to_call=BOT_ALIAS):
+    print(f"Sending APRS message: '{message_text}' from {LOGIN_CALL} to {to_call}")
 
+    # Set up APRS frame
     aprs_handler = Handler(callsign=LOGIN_CALL)
-    aprs_handler.destination = BOT_ALIAS
-    
-    # === Critical fix: Set path to APRS-IS digipeater path ===
-    aprs_handler.path = "TCPIP,qAR"  # This flags message as APRS-IS originated
-    
+    aprs_handler.destination = to_call
+    aprs_handler.path = "TCPIP,qAR"  # APRS-IS path
+
+    # Add message ID
     msg_id = str(random.randint(100, 999))
     message_with_id = f"{message_text}{{{msg_id}}}"
 
-    aprs_frame = aprs_handler.make_aprs_msg(to_call=BOT_ALIAS, text=message_with_id)
+    # Build and encode the frame
+    try:
+        aprs_frame = aprs_handler.make_aprs_msg(to_call=to_call, text=message_with_id)
+        aprs_message_frame_bytes = aprs_frame.to_aprs_string() + b'\n'
+    except Exception as e:
+        print(f"ERROR converting frame to APRS string: {e}")
+        return
 
-    aprs_message_frame_bytes = aprs_frame.to_aprs_string() + b'\n'
+    print("Constructed APRS-IS Frame:")
+    try:
+        print(aprs_message_frame_bytes.decode('ascii', errors='replace'))
+    except Exception:
+        print("Failed to decode APRS frame for display.")
 
+    # Connect and send over APRS-IS
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
-            sock.settimeout(15) 
+            sock.settimeout(15)
             sock.connect((APRS_IS_SERVER, APRS_IS_PORT))
             print(f"Connected to APRS-IS server: {APRS_IS_SERVER}:{APRS_IS_PORT}")
 
-            login = f'user {LOGIN_CALL} pass {PASSCODE} vers aprs-message-sender 1.0\n'
-            sock.sendall(login.encode())
-            print(f"Sent login: {login.strip()}")
+            login_line = f'user {LOGIN_CALL} pass {PASSCODE} vers aprs-message-sender 1.0\n'
+            sock.sendall(login_line.encode())
+            print("Sent login.")
 
-            time.sleep(3)
+            time.sleep(1)
+
+            filter_line = "filter t/m\n"
+            sock.sendall(filter_line.encode())
+            print("Sent APRS-IS filter request.")
+
+            time.sleep(1)
 
             sock.sendall(aprs_message_frame_bytes)
-            print(f"Sent APRS Message (via Ioreth Handler): {aprs_message_frame_bytes.decode('utf-8').strip()}")
+            print("APRS message sent.")
 
-            time.sleep(10)
+            try:
+                response = sock.recv(1024)
+                print("Server response:")
+                print(response.decode('utf-8', errors='replace'))
+            except socket.timeout:
+                print("No server response (timeout).")
 
-            print("Message send sequence complete. Disconnecting.")
+            time.sleep(2)
+            print("Finished message send cycle.")
 
         except ConnectionRefusedError:
-            print(f"ERROR: Connection refused. Ensure APRS-IS server is reachable and port {APRS_IS_PORT} is open.")
+            print(f"ERROR: Connection refused on port {APRS_IS_PORT}.")
         except socket.timeout:
-            print("ERROR: Connection timed out during connect or send. Network issue or server unresponsive.")
+            print("ERROR: Connection timed out.")
         except Exception as e:
-            print(f"An unexpected error occurred: {e}")
+            print(f"Unexpected error: {e}")
 
+# --- CLI Entry Point ---
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 2:
+        target = sys.argv[1].strip().upper()
+        message_to_send = sys.argv[2]
+        print(f"Sending message to: {target}")
+        send_aprs_message(message_to_send, to_call=target)
+    elif len(sys.argv) > 1:
         message_to_send = sys.argv[1]
-        print(f"Using message from command line: {message_to_send}")
+        print(f"Sending message to default alias: {BOT_ALIAS}")
         send_aprs_message(message_to_send)
     else:
-        print("No message provided as a command-line argument.")
-        print("Usage (from /opt/aprsbot/): python -m ioreth.tatical_text_msg \"YOUR_MESSAGE_HERE\"")
+        print("Usage:")
+        print("  python tatical_text_msg.py \"MSG message to TEST\"")
+        print("  OR")
+        print("  python tatical_text_msg.py callsign \"MSG custom message\"")
