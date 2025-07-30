@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import sys, logging, time, signal
+
 from ioreth.bot import ReplyBot
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)-15s %(levelname)s: %(funcName)s %(message)s"
 )
 logger = logging.getLogger(__name__)
