@@ -16,52 +16,46 @@ you will be, effectively, operating remote transmitters through the Internet.
 
 # Updates to original (by Wayne Spivak, KC2NJV)
 
-<b>MAJOR NOTE:</b>  I strongly suggest you put eveything in /opt/aprsbot.  I don't think there is anything hard-coded in Bot.py (some fallbacks), everything is in aprsbot.conf.  The major script is in BOT.PY, however you woon't see it in the distribution.  Instead I will have two optional BOT.PY.  Bot-sf.py hass a Store and Forward sub-system.  Bot-norm.py is upgraded IORETH APRS Bot.
+<b>Installation and Notes:</b>  
 
-<b>Files that need configuration:</b>
+Read the requirements file.  I had to load 99% in a virtual environment and run the program in the same environment.  The replybot.service is configured that way.
 
-aprsbot.conf
+Put eveything in /opt/aprsbot.  I don't think there is anything hard-coded in Bot.py (some fallbacks), but everything is in aprsbot.conf.
 
-log.html (make it to your liking, maybe as a php file..)
+Some other scripts, like the service scripts, the tatical_text_msg.py and tatical_beacon.py, at_aprs_send.sh and random_aprs_scheduler.sh (make exec) need some info customized. trim_audit_logs.py also need some slight modification.
 
-relaybot.service
+The log.html file, (make it to your liking, maybe as a php file..) and check the aprsapi.service file to obtain the logs.  You will need to install gunicorn and probably nginx.
 
-
-<b>Installation:</b> Copy to a directory du jour (suggest /opt/aprsbot), configure APRSBOT.conf, copy either bot-sf.py or bot-normal.py to bot.py and enjoy.
-
-add/modify replybot.service to autostart bot
-
-add/modify aprsapi.service to autostart logging server for webpage
-
-add the following cron jobs 
+Add the following cron jobs 
 
      #send beacon
      
-     */5 * * * * /usr/bin/python /opt/aprsbot/ioreth/tatical_beacon.py  >/dev/null 2>&1
+     */3 * * * * /usr/bin/python /opt/aprsbot/ioreth/tatical_beacon.py  >/dev/null 2>&1
      
      #Trim audit_log
-     
-     0 3 * * * /usr/bin/python3 /opt/aprsbot/trim_audit_logs.py
-     
-     <i>For Store and Forward sub-system</i>
-     
-     #clean up store and forward db
-     
-     0 3 * * * /opt/aprsbot/venv/bin/python /opt/aprsbot/ioreth/sf_cleanup.py >> /opt/aprsbot/logs/sf_cleanup.log
-     
-     #Automate Store and Forward Delivery
-     
-     */5 * * * * /opt/aprsbot/venv/bin/python /opt/aprsbot/ioreth/sf_pending_forward.py >> /opt/aprsbot/logs/sf_forward.log 2>&1
 
-<b>Changes:</b>
+     0 3 * * * /usr/bin/python3 /opt/aprsbot/trim_audit_logs.py
+
+     #Run auto-random messages to your list:
+
+     1 0 * * * /opt/aprsbot/random_aprs_scheduler.sh
+
+     # Optional other meesages use this syntax:
+     
+     0 */2 * * * cd /opt/aprsbot; python -m ioreth.tatical_text_msg  <Your sending Callsign/Tatical Callsign> "MSG your message" >/dev/null 2>&1
+
+
+<b>Addtional Changes to the Orginal:</b>
 
 Logger provides timestamps
 
-SQLite3 databases for users, blacklisted callsigns and admins (with timestamps), audit_log and store_forward
+SQLite3 databases for users, blacklisted callsigns and admins (with timestamps), audit_log
 
 Blacklist limited to Admins
 
-Public logging via the DB, based on the full audit trail.  Logging handled by gunicorn, a service is supplied (check paths). Api.py and basic HTML page supplied.  You should use nginx for the proxy between log.php and api.py.
+Public logging via the DB, based on the full audit trail.  
+
+As mentioned: Logging handled by gunicorn, a service is supplied (check paths). Api.py and basic HTML page supplied.  You should use nginx for the proxy between log.php and api.py.
 
 Added code to prevent loopback (deduplication) from sent messages
 
@@ -72,22 +66,19 @@ Added configurable Welcome message for new subscribers
 Callsign, Callsign Alias, List Names, DB name.
 Configurable Beacon text
 Configurable Known Commands
-Configurable NetCheckOut stanza
-Configurable Store-Forward
-Note: SF bot creates a dynamic filter: filter p/<ALIAS>/<user1>/<user2>/<...> t/pms,t/m
+Deduplication time value
+
+Other items (some repeated):
 
 Added a beacon (tatical_beacon.py) which will enable APRS-IS only devices to find your tactical callsign (add a cronjob @15min intervals).
 
 Added a script to trim audit_log in SQLite3 db.  Just add a cron job.
 
-Added a db to keep deduplication persistent over bot reboots.  Time frame "DEDUP_TTL = 3600  # 60 minutes" is in Bot.py row 36.  It seems AndroidAPRS app doesn't accept ACK's properly, and it sends 7 retries, stopping just under 60 minutes total time.
-1. <fill-in>.db maintains users, admins, blacklist and daily audit log
-2. audit_log.db maintains dedup_cache
-3. store_forward.db maintains SF data
+Added a db to keep deduplication persistent over bot reboots.  
 
 Relaybot.service to automatically start (on my system I had to run python in a virtual environment)
 
-To create or delete ADMINS, I have commented out those lines in Bot.py.  I suggest you use sqlite3 and use
+To create or delete ADMINS, I have remvoed this facility.  I suggest you use sqlite3 and use
 a) To Add:
     "INSERT OR IGNORE INTO admins (callsign) VALUES (?)"
 b) To Delete:
@@ -101,9 +92,9 @@ CQ [space] [listname] [message] <-- listname is configured in APRSBOT and can be
 
 [<b>NOTE:</b> There is no automatic unsubscribe (concept is that this was made for Emergency Communications)
 
-NetMSG [space] [message] <-- to distribute message to list
+NetMSG or MSG or NetMRG/MRG (normal typos) [space] [message] <-- to distribute message to list
 
-NETUSERS  <-- list of users
+NETUSERS  <-- Last 10 list of users
 
 NETCHECKOUT  <-- to leave the list.
 
@@ -115,7 +106,7 @@ Ben Jackson, N1WBV for his assistance!!!!
 
 # ToDo List:
 
-
+I want to add a Store-Forward feature, which isn't that difficult, except can't gain the assistance of any AI to do it properly without major mission creep and unbelievable complexity.  The four major AI's have failed to achieve the goals and requirements of this feature.  Help is appreciated from real Python programmers...
 
 # License (from the original)
 
@@ -146,7 +137,7 @@ E-mail: <kc2njv@sbanetweb.com>
 
 Web: <http://sbanetweb.com:8080>
 
-Special extra thanks to Gemini, Co-Pilot and Perplexity AI's that did ALL the HEAVY, Medium and lite lifting!
+The acutal coding was done by Gemini, Co-Pilot, ChatGPT and Perplexity AI.  I would not recommend using any of them given a multitude of issues from failure to comply with instructions, mission creep, rabbit holes (logic), and the list goes on...
 
 Original Author:
 Author: Alexandre Erwin Ittner   (callsign: PP5ITT)
