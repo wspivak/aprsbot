@@ -4,7 +4,7 @@
 WORKDIR="/opt/aprsbot"
 PYTHON="/usr/bin/python3"
 MODULE="ioreth.tatical_text_msg"
-CALLSIGN="ERLI"
+CALLSIGN="<FILL-IN>"
 LOGFILE="/tmp/at_debug.log"
 
 # === Input ===
