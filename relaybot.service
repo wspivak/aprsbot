@@ -1,26 +1,20 @@
+
 [Unit]
-Description=ReplyBot Service
-Wants=network-online.target direwolf.service
-After=network-online.target direwolf.service
+Description=Ioreth APRS Bot Service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=/bin/mkdir -p /opt/aprsbot/logs
-ExecStartPre=/bin/bash -c '/usr/bin/touch /opt/aprsbot/logs/replybot.{log,err} && /bin/chown <FILL-IN> /opt/aprsbot/logs/replybot.{log,err}'
-ExecStartPre=/bin/sleep 15
-# I found that the bot couldn't find the network when it first started, thus added a delay
-ExecStartPre=/bin/sleep 15
-ExecStart=/<path to>/myenv/bin/python /<path to>/iorethd /<path to>/aprsbot.conf
-WorkingDirectory=/<path to>
-**Environment="VIRTUAL_ENV=/<path to>/myenv"**
-**Environment="PATH=/<path to>/myenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"**
-Environment="PYTHONPATH=/opt/aprsbot"
-StandardOutput=append:/opt/aprsbot/logs/replybot.err
-StandardError=append:/opt/aprsbot/logs/replybot.log
+User=<FILL IN>
+Group=<FILL IN>
+WorkingDirectory=/opt/aprsbot/
+#Environment="PATH=/opt/aprsbot/venv/bin"
+ExecStart=/opt/aprsbot/venv/bin/python /opt/aprsbot/iorethd /opt/aprsbot/aprsbot.conf
+StandardOutput=append:/opt/aprsbot/logs/replybot.log
+StandardError=append:/opt/aprsbot/logs/replybot.err
 Restart=always
-User=<user>
-
-
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
