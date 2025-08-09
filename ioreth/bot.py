@@ -202,39 +202,6 @@ class BotAprsHandler(aprs.Handler):
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS dedup (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                direction TEXT,
-                source TEXT,
-                destination TEXT,
-                message TEXT,
-                msgid TEXT,
-                rejected BOOLEAN DEFAULT 0,
-                note TEXT,
-                transport TEXT
-            )
-        """)
-
-        # --- Add Indexes (New Section) ---
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_timestamp ON dedup (timestamp);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_source ON dedup (source);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_destination ON dedup (destination);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_dedup_message ON dedup (message);")
-
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_dedup_group_by_order_by ON dedup (
-                direction,
-                source,
-                destination,
-                message,
-                msgid,
-                rejected,
-                transport,
-                timestamp DESC
-            );
-        """)
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_users_callsign ON users (callsign);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_blacklist_callsign ON blacklist (callsign);")
@@ -594,7 +561,7 @@ class BotAprsHandler(aprs.Handler):
                 logger.info(f"Status frame sent via {label}: {status}")
 
         # Dynamic status message using current bot identity
-        self.send_aprs_msg("APRS", f">The Net is active here at {self.callsign}.", is_ack=False)
+        self.send_aprs_msg("APRS", f">The {self.netname} Net is active at {self.callsign}.", is_ack=False)
 
 
 #    def _broadcast_message(self, source, message):
