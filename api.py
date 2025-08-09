@@ -2,7 +2,6 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 import sqlite3
 import re
-import sys
 from datetime import datetime, timedelta
 from pytz import timezone, utc
 from collections import defaultdict
@@ -10,129 +9,137 @@ from collections import defaultdict
 app = Flask(__name__)
 CORS(app)
 
-DATABASE = 'erli.db'
+DB_FILE = 'erli.db'
+ET_ZONE = timezone('America/New_York')
 
-def trim_aprs_message(message):
-    # Trim NETMSG / MSG command prefixes
-    pattern = r'^(NETMSG|MSG|NETMRG|MRG)\s+(.*)'
-    match = re.match(pattern, message.strip(), re.IGNORECASE)
-    return match.group(2).strip() if match else message.strip()
 
-def query_audit_log_deduplicated():
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
+import re
 
-    cursor.execute("""
+def clean_message(raw_msg):
+    if not raw_msg:
+        return None
+
+    msg = raw_msg.strip()
+
+    # Skip telemetry/ACKs/position junk
+    if msg[0] in ('@', '!', '=', '/', '_', ';', '`', ':'):
+        return None
+    if re.match(r'^T#\d+', msg): return None
+    if re.match(r'^ack\d+\}?$', msg.lower()): return None
+
+    # Remove call aliases like <KC2NJV-7> or prefaces like ERLI :
+    msg = re.sub(r'^<[^>]{3,10}>\s*', '', msg)
+    msg = re.sub(r'^[A-Z0-9\-]{3,9}\s*:\s*', '', msg)
+
+    # Match proword and body
+    m = re.match(r'^(netmsg|netmrg|msg|mrg|cq)\b\s+(.*)', msg, re.IGNORECASE)
+    if not m:
+        return None
+
+    proword = m.group(1).lower()
+    body = m.group(2).strip()
+
+    # Strip trailing {xxx}, even if malformed ({97, {77}
+    body = re.sub(r'\s*\{[^\s{}]{1,6}\}?\s*$', '', body).strip()
+
+    if not body:
+        return None
+
+    # Preserve "CQ", drop others
+    return f"CQ {body}" if proword == "cq" else body
+
+
+def fetch_rows():
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
         SELECT
-            STRFTIME('%Y-%m-%d %H:%M:%S', al.timestamp) AS timestamp_utc,
-            TRIM(LOWER(al.direction)) AS direction,
-            TRIM(LOWER(al.source)) AS source,
-            TRIM(al.message) AS message,
-            TRIM(LOWER(al.destination)) AS destination,
-            REPLACE(TRIM(al.msgid), X'0D', '') AS msgid,
-            al.transport AS transport,
-            al.rejected AS rejected
-        FROM
-            audit_log AS al
-        LEFT JOIN
-            users AS eu ON al.source = eu.callsign
-        LEFT JOIN
-            blacklist AS bl ON al.source = bl.callsign
-        WHERE
-            al.timestamp >= datetime('now', '-7 days')
-            AND al.direction = 'recv'
-            AND eu.callsign IS NOT NULL
-            AND bl.callsign IS NULL
-        ORDER BY
-            al.timestamp ASC
+            STRFTIME('%Y-%m-%d %H:%M:%S', timestamp),
+            direction,
+            source,
+            destination,
+            message,
+            msgid,
+            transport
+        FROM audit_log
+        WHERE timestamp >= datetime('now', 'utc', '-7 days')
+          AND COALESCE(rejected, 0) = 0
+        ORDER BY timestamp ASC
     """)
-    rows = cursor.fetchall()
+
+    rows = cur.fetchall()
     conn.close()
+    return rows
 
-    utc_zone = utc
-    et_zone = timezone('America/New_York')
-    columns = ['timestamp_utc', 'direction', 'source', 'message', 'destination', 'msgid', 'transport', 'rejected']
-
-    # Step 1: Filter and group messages by prefix
+def deduplicate(rows):
     grouped = defaultdict(list)
     for row in rows:
-        row_dict = dict(zip(columns, row))
-        original_message = (row_dict['message'] or '').strip()
-        lowered = original_message.lower()
-
-        # new allowed prefixes
-        if lowered.startswith("netmsg ") or lowered.startswith("netmrg "):
-            trimmed = trim_aprs_message(original_message)
-            if not trimmed:
-                continue
-            display_msg = trimmed
-        
-        elif lowered.startswith("msg ") or lowered.startswith("mrg "):
-            trimmed = trim_aprs_message(original_message)
-            if not trimmed:
-                continue
-            display_msg = trimmed
-        
-        elif lowered.startswith("cq"):
-            display_msg = original_message
-        
-        else:
-            continue   # ❌ Skip anything not starting with NETMSG / MSG / CQ
-
-        # Double-check message isn't blank
-        if not display_msg.strip():
+        ts_utc, direction, source, dest, raw_msg, msgid, transport = row
+        trimmed = clean_message(raw_msg)
+        if not trimmed:
             continue
+        grouped[(source, trimmed)].append({
+            'timestamp_utc': ts_utc,
+            'source': source,
+            'destination': dest,
+            'transport': transport,
+            'trimmed_message': trimmed,
+        })
 
-        row_dict['trimmed_message'] = display_msg
-        grouped[(row_dict['source'], display_msg)].append(row_dict)
-
-    # Step 2: Deduplicate within 3-minute window
     deduped = []
-    for (source, trimmed_msg), msgs in grouped.items():
-        msgs.sort(key=lambda r: datetime.strptime(r['timestamp_utc'], '%Y-%m-%d %H:%M:%S'))
+    for (source, trimmed), msgs in grouped.items():
+        msgs.sort(key=lambda x: x['timestamp_utc'])
         bucket = None
         destinations = set()
-        for row in msgs:
-            row_time = datetime.strptime(row['timestamp_utc'], '%Y-%m-%d %H:%M:%S')
+
+        for msg in msgs:
+            msg_time = datetime.strptime(msg['timestamp_utc'], '%Y-%m-%d %H:%M:%S')
             if bucket is None:
-                bucket = row.copy()
-                destinations = {row['destination']}
+                bucket = msg.copy()
+                bucket_time = msg_time
+                destinations = {msg['destination']}
+            elif msg_time - bucket_time <= timedelta(minutes=3):
+                destinations.add(msg['destination'])
             else:
-                bucket_time = datetime.strptime(bucket['timestamp_utc'], '%Y-%m-%d %H:%M:%S')
-                if (row_time - bucket_time) <= timedelta(minutes=3):
-                    destinations.add(row['destination'])
-                else:
-                    bucket['destinations'] = ' | '.join(sorted(destinations))
-                    utc_dt = utc_zone.localize(bucket_time)
-                    et_dt = utc_dt.astimezone(et_zone)
-                    bucket['timestamp'] = f"{et_dt:%Y-%m-%d %H:%M}:00"
-                    del bucket['timestamp_utc']
-                    deduped.append(bucket)
-                    bucket = row.copy()
-                    destinations = {row['destination']}
+                # Finalize previous bucket
+                utc_dt = utc.localize(bucket_time)
+                et_dt = utc_dt.astimezone(ET_ZONE)
+                deduped.append({
+                    'timestamp': et_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                    'source': bucket['source'],
+                    'transport': bucket['transport'],
+                    'trimmed_message': bucket['trimmed_message'],
+                    'destinations': ' | '.join(sorted(destinations)),
+                })
+                # Start new bucket
+                bucket = msg.copy()
+                bucket_time = msg_time
+                destinations = {msg['destination']}
 
-        # Final group push
+        # Add final group
         if bucket:
-            bucket_time = datetime.strptime(bucket['timestamp_utc'], '%Y-%m-%d %H:%M:%S')
-            bucket['destinations'] = ' | '.join(sorted(destinations))
-            utc_dt = utc_zone.localize(bucket_time)
-            et_dt = utc_dt.astimezone(et_zone)
-            bucket['timestamp'] = f"{et_dt:%Y-%m-%d %H:%M:%S}"
-            del bucket['timestamp_utc']
-            deduped.append(bucket)
+            utc_dt = utc.localize(bucket_time)
+            et_dt = utc_dt.astimezone(ET_ZONE)
+            deduped.append({
+                'timestamp': et_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                'source': bucket['source'],
+                'transport': bucket['transport'],
+                'trimmed_message': bucket['trimmed_message'],
+                'destinations': ' | '.join(sorted(destinations)),
+            })
 
-    # Sort final list (newest first)
-    deduped.sort(key=lambda r: r['timestamp'], reverse=True)
-    return deduped
+    # Sort newest -> oldest
+    return sorted(deduped, key=lambda x: x['timestamp'], reverse=True)
 
 @app.route('/logs')
 def get_logs():
     try:
-        logs = query_audit_log_deduplicated()
+        rows = fetch_rows()
+        logs = deduplicate(rows)
         return jsonify(logs)
     except Exception as e:
-        import traceback
-        print(f"DEBUG: log API error {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"🚨 ERROR: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
