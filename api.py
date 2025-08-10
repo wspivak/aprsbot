@@ -7,13 +7,11 @@ from pytz import timezone, utc
 from collections import defaultdict
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-DB_FILE = 'erli.db'
+DB_FILE = '/opt/aprsbot/erli.db'
 ET_ZONE = timezone('America/New_York')
 
-
-import re
 
 def clean_message(raw_msg):
     if not raw_msg:
@@ -45,14 +43,12 @@ def clean_message(raw_msg):
     if not body:
         return None
 
-    # Preserve "CQ", drop others
     return f"CQ {body}" if proword == "cq" else body
 
 
 def fetch_rows():
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
-
     cur.execute("""
         SELECT
             STRFTIME('%Y-%m-%d %H:%M:%S', timestamp),
@@ -67,18 +63,35 @@ def fetch_rows():
           AND COALESCE(rejected, 0) = 0
         ORDER BY timestamp ASC
     """)
-
     rows = cur.fetchall()
     conn.close()
     return rows
 
+
+def get_known_users():
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute("SELECT callsign FROM users")
+    rows = cur.fetchall()
+    conn.close()
+    return set(r[0] for r in rows)
+
+
 def deduplicate(rows):
+    known_users = get_known_users()
     grouped = defaultdict(list)
+
     for row in rows:
         ts_utc, direction, source, dest, raw_msg, msgid, transport = row
         trimmed = clean_message(raw_msg)
         if not trimmed:
             continue
+
+        # Skip CQ messages from unknown users
+        if trimmed.startswith("CQ ") and source not in known_users:
+            app.logger.info(f"Skipping CQ from unknown user: {source}")
+            continue
+
         grouped[(source, trimmed)].append({
             'timestamp_utc': ts_utc,
             'source': source,
@@ -102,7 +115,6 @@ def deduplicate(rows):
             elif msg_time - bucket_time <= timedelta(minutes=3):
                 destinations.add(msg['destination'])
             else:
-                # Finalize previous bucket
                 utc_dt = utc.localize(bucket_time)
                 et_dt = utc_dt.astimezone(ET_ZONE)
                 deduped.append({
@@ -112,12 +124,10 @@ def deduplicate(rows):
                     'trimmed_message': bucket['trimmed_message'],
                     'destinations': ' | '.join(sorted(destinations)),
                 })
-                # Start new bucket
                 bucket = msg.copy()
                 bucket_time = msg_time
                 destinations = {msg['destination']}
 
-        # Add final group
         if bucket:
             utc_dt = utc.localize(bucket_time)
             et_dt = utc_dt.astimezone(ET_ZONE)
@@ -129,8 +139,8 @@ def deduplicate(rows):
                 'destinations': ' | '.join(sorted(destinations)),
             })
 
-    # Sort newest -> oldest
     return sorted(deduped, key=lambda x: x['timestamp'], reverse=True)
+
 
 @app.route('/logs')
 def get_logs():
@@ -139,8 +149,48 @@ def get_logs():
         logs = deduplicate(rows)
         return jsonify(logs)
     except Exception as e:
-        print(f"🚨 ERROR: {e}")
+        app.logger.error(f"🚨 ERROR in /logs route: {e}")
         return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route('/users')
+def get_users():
+    try:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        cur = conn.cursor()
+        cur.execute("SELECT callsign, timestamp FROM users ORDER BY timestamp DESC")
+        rows = cur.fetchall()
+        conn.close()
+        users = [{'callsign': r[0], 'timestamp': r[1]} for r in rows]
+        return jsonify({"users": users})
+    except Exception as e:
+        app.logger.error(f"🚨 ERROR in /users route: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/blist')
+def get_blacklist():
+    try:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        cur = conn.cursor()
+        cur.execute("SELECT callsign, timestamp FROM blacklist ORDER BY timestamp DESC")
+        rows = cur.fetchall()
+        conn.close()
+        users = [{'callsign': r[0], 'timestamp': r[1]} for r in rows]
+        return jsonify({"users": users})
+    except Exception as e:
+        app.logger.error(f"🚨 ERROR in /blist route: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+        
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "ok"}), 200
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8081)
+
+print("✅ Flask app loaded")
+print("✅ Registered routes:")
+for rule in app.url_map.iter_rules():
+    print(f"🔗 {rule.endpoint}: {rule.rule}")
