@@ -51,7 +51,7 @@ Logger provides timestamps
 
 SQLite3 databases for users, blacklisted callsigns and admins (with timestamps), audit_log
 
-Blacklist limited to Admins
+Blacklist limited to Admins, is manually added and is normalized, i.e.; callsign AB2xyz will block all AB2xyx-xx.
 
 Public logging via the DB, based on the full audit trail.  
 
