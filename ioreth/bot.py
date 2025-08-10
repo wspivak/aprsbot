@@ -243,9 +243,18 @@ class BotAprsHandler(aprs.Handler):
         return re.sub(r'\s+', ' ', text)
 
     def is_blacklisted(self, callsign):
+        """
+        Checks if a callsign is blacklisted by comparing its base form
+        (lowercase, no SSID, no wildcard) against entries in the database.
+        """
+        # Normalize: lowercase, strip whitespace, remove wildcard, strip SSID
+        normalized = callsign.strip().lower().replace("*", "")
+        base_callsign = normalized.split('-')[0]
+    
         cur = self.db.cursor()
-        cur.execute("SELECT 1 FROM blacklist WHERE callsign = ?", (callsign,))
+        cur.execute("SELECT 1 FROM blacklist WHERE callsign = ?", (base_callsign,))
         return cur.fetchone() is not None
+        
 
     def detect_and_correct_command(self, input_qry):
         matches = difflib.get_close_matches(input_qry, self.KNOWN_COMMANDS.keys(), n=1, cutoff=0.8)
